@@ -280,6 +280,9 @@ SConscript([
   'openpilot/system/loggerd/SConscript',
 ])
 
+# Native helpers used by desktop simulators.
+SConscript(['openpilot/tools/sim/SConscript'])
+
 if arch == "comma_arm64":
   SConscript(['openpilot/system/camerad/SConscript'])
 

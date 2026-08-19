@@ -182,7 +182,16 @@ class LateralLagEstimator:
     self.window_sec = window_sec
     self.okay_window_sec = okay_window_sec
     self.min_recovery_buffer_sec = min_recovery_buffer_sec
+    # The +0.2 margin assumes a real EPS that takes time to reach the commanded
+    # angle. lagd only refines this above MIN_VEGO (15 m/s), so below that the
+    # seed is what modeld uses forever -- and modeld treats it as lookahead,
+    # sampling the plan that far ahead and steering for it now. A simulated
+    # rack that actuates near-instantly therefore turns in early. Override the
+    # seed with SIM_LATERAL_DELAY (seconds) to match the sim's real actuation.
     self.initial_lag = CP.steerActuatorDelay + 0.2
+    if (lag_override := os.environ.get("SIM_LATERAL_DELAY")) is not None:
+      self.initial_lag = float(lag_override)
+      cloudlog.warning(f"lagd: initial lag overridden to {self.initial_lag:.3f}s via SIM_LATERAL_DELAY")
     self.block_size = block_size
     self.block_count = block_count
     self.min_valid_block_count = min_valid_block_count

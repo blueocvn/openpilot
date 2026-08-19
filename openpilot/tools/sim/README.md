@@ -24,22 +24,26 @@ options:
 ```
 
 #### Bridge Controls:
-- To engage openpilot press 2, then press 1 to increase the speed and 2 to decrease.
-- To disengage, press "S" (simulates a user brake)
+- Use `W`, `A`, `S`, and `D` for temporary manual control.
+- Press `R` to reset the simulation, `I` to toggle ignition, `H` to hold or
+  release the car, and `Q` to exit.
 
 #### All inputs:
 
 ```
 | key  |   functionality       |
 |------|-----------------------|
-|  1   | Cruise Resume / Accel |
-|  2   | Cruise Set    / Decel |
-|  3   | Cruise Cancel         |
 |  r   | Reset Simulation      |
 |  i   | Toggle Ignition       |
+|  h   | Hold / release car    |
 |  q   | Exit all              |
 | wasd | Control manually      |
 ```
+
+## CARLA on Windows/WSL
+
+The CARLA bridge has its own setup and launcher. See
+[the CARLA installation guide](carla/installation.md).
 
 ## MetaDrive
 

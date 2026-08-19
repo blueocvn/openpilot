@@ -1,0 +1,11 @@
+Import('envCython')
+
+import libyuv
+
+# CARLA supplies BGRA buffers, which libyuv converts straight to NV12 using
+# vectorized native code. This small extension is optional at import time so
+# simulator unit tests do not require a prior SCons build.
+sim_env = envCython.Clone()
+sim_env.Append(CPPPATH=[libyuv.INCLUDE_DIR], LIBPATH=[libyuv.LIB_DIR])
+sim_env.Program('lib/libyuv_pyx.so', 'lib/libyuv_pyx.pyx',
+                LIBS=sim_env['LIBS'] + ['yuv'])

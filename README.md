@@ -1,3 +1,50 @@
+# openpilot + CARLA on Windows/WSL
+
+This fork adds a CARLA 0.9.16 development integration. CARLA runs natively on
+Windows while openpilot, modeld, controls, the UI, and the bridge run in Ubuntu
+WSL2. The simulated vehicle is a Tesla Model 3, and one road camera is enabled
+by default for better simulator performance. Setup downloads a large native
+CARLA package and requires approximately 60 GB free on `D:`.
+
+See the [CARLA installation guide](openpilot/tools/sim/carla/installation.md)
+for prerequisites, firewall setup, troubleshooting, and teammate onboarding.
+
+Clone and set up the `codex/carla-sim` branch from Ubuntu WSL:
+
+```bash
+git clone --branch codex/carla-sim --recurse-submodules \
+  https://github.com/blueocvn/openpilot.git /mnt/d/work/openpilot
+cd /mnt/d/work/openpilot
+git lfs pull
+bash openpilot/tools/sim/carla/run.sh setup
+
+cd openpilot/tools/sim/carla
+bash run.sh all --carla-town Town10HD_Opt --carla-spawn-point 16
+```
+
+To let openpilot command both acceleration and braking:
+
+```bash
+bash run.sh all --openpilot-longitudinal \
+  --carla-town Town10HD_Opt --carla-spawn-point 16
+```
+
+One road camera is the default; add `--dual_camera` only when a wide road
+camera is required. The bridge terminal controls are `W/A/S/D` for temporary
+manual overrides, `R` to reset, `I` to toggle ignition, `H` to hold/release,
+and `Q` to stop. Runtime logs are stored under `.carla/logs/`. After setup,
+run `openpilot/tools/sim/carla/run.ps1 -Command firewall-add -WslDistro Ubuntu`
+from an Administrator PowerShell; the installation guide includes firewall
+recovery commands for a changed WSL address.
+
+This integration is intended for simulation and research. CARLA navigation
+routes are not supplied to openpilot, so junction turn selection is based on
+the visible scene rather than a navigation destination.
+
+The remainder of this README is the upstream commaai/openpilot documentation.
+
+---
+
 <div align="center" style="text-align: center;">
 
 <h1>openpilot</h1>

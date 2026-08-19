@@ -6,6 +6,15 @@ requires-python = ">=3.12.3, <3.13"
 overrides = [{ name = "opendbc", editable = "opendbc_repo" }]
 
 [[package]]
+name = "carla"
+version = "0.9.16"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/37/c43a7c9d0dc8bd8d0791116998a49c178ab4906a0430150b21372306e520/carla-0.9.16-cp312-cp312-manylinux_2_31_x86_64.whl", hash = "sha256:c323a7b1f8ad3ac81cfac79f5d96c9cac8afa6d0a768fa2fffa46bb336945c4f", size = 34230684, upload-time = "2025-09-14T07:54:50.049Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/6f/47b4778834ed2bbc8e3312e533c82fdd000ce71cff2ade01d0804ec69a96/carla-0.9.16-cp312-cp312-win_amd64.whl", hash = "sha256:f1f22d153b1a43b579d90e816b7016ca19f1483ca64cbc5ebbcd4dbf325e3356", size = 5037190, upload-time = "2025-09-14T07:54:52.916Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.7.22"
 source = { registry = "https://pypi.org/simple" }
@@ -477,6 +486,11 @@ wheels = [
 ]
 
 [[package]]
+name = "libyuv"
+version = "1922.0"
+source = { git = "https://github.com/commaai/dependencies.git?subdirectory=libyuv&rev=release-libyuv#23d87efdeaed283a10007be31a3edff2ab3aa5d2" }
+
+[[package]]
 name = "matplotlib"
 version = "3.11.1"
 source = { registry = "https://pypi.org/simple" }
@@ -618,6 +632,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+carla = [
+    { name = "carla", marker = "platform_machine == 'x86_64'" },
+    { name = "libyuv", marker = "platform_machine == 'x86_64'" },
+]
 submodules = [
     { name = "msgq" },
     { name = "opendbc" },
@@ -647,6 +665,7 @@ standalone = [
 
 [package.metadata]
 requires-dist = [
+    { name = "carla", marker = "platform_machine == 'x86_64' and extra == 'carla'", specifier = "==0.9.16" },
     { name = "codespell", marker = "extra == 'testing'" },
     { name = "comma-deps-acados" },
     { name = "comma-deps-bootstrap-icons", marker = "extra == 'tools'" },
@@ -664,6 +683,7 @@ requires-dist = [
     { name = "coverage", marker = "extra == 'testing'" },
     { name = "inputs" },
     { name = "jeepney" },
+    { name = "libyuv", marker = "platform_machine == 'x86_64' and extra == 'carla'", git = "https://github.com/commaai/dependencies.git?subdirectory=libyuv&rev=release-libyuv" },
     { name = "matplotlib", marker = "extra == 'tools'" },
     { name = "msgq", marker = "extra == 'submodules'", editable = "msgq_repo" },
     { name = "numpy", specifier = ">=2.0" },
@@ -686,7 +706,7 @@ requires-dist = [
     { name = "websocket-client" },
     { name = "zstandard" },
 ]
-provides-extras = ["testing", "tools", "submodules"]
+provides-extras = ["testing", "tools", "carla", "submodules"]
 
 [package.metadata.requires-dev]
 standalone = [{ name = "openpilot", extras = ["submodules"] }]

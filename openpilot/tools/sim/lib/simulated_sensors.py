@@ -19,6 +19,9 @@ class SimulatedSensors:
     self.camerad = Camerad(dual_camera=dual_camera)
     self.last_perp_update = 0
     self.last_dmon_update = 0
+    self.camera_stats_start = time.monotonic()
+    self.camera_stats_frames = 0
+    self.camera_stats_conversion_s = 0.0
 
   def send_imu_message(self, simulator_state: 'SimulatorState'):
     for _ in range(5):
@@ -97,12 +100,34 @@ class SimulatedSensors:
 
   def send_camera_images(self, world: 'World'):
     world.image_lock.acquire()
-    yuv = self.camerad.rgb_to_yuv(world.road_image)
-    self.camerad.cam_send_yuv_road(yuv)
-
+    conversion_start = time.perf_counter()
+    road_yuv = (self.camerad.bgra_to_yuv(world.road_bgra_image)
+                if world.road_bgra_image is not None else self.camerad.rgb_to_yuv(world.road_image))
+    wide_yuv = None
     if world.dual_camera:
-      yuv = self.camerad.rgb_to_yuv(world.wide_road_image)
-      self.camerad.cam_send_yuv_wide_road(yuv)
+      wide_yuv = (self.camerad.bgra_to_yuv(world.wide_road_bgra_image)
+                  if world.wide_road_bgra_image is not None else self.camerad.rgb_to_yuv(world.wide_road_image))
+
+    # RGB->NV12 conversion is CPU-heavy. Timestamp both camera frames only
+    # after conversion so modeld receives a synchronized stereo pair.
+    timestamp_ns = time.monotonic_ns()
+    self.camerad.cam_send_yuv_road(road_yuv, timestamp_ns)
+    if wide_yuv is not None:
+      self.camerad.cam_send_yuv_wide_road(wide_yuv, timestamp_ns)
+
+    self.camera_stats_frames += 1
+    self.camera_stats_conversion_s += time.perf_counter() - conversion_start
+    now = time.monotonic()
+    elapsed = now - self.camera_stats_start
+    if elapsed >= 2.0:
+      camera_count = 2 if wide_yuv is not None else 1
+      stats = f"SIM camera: {self.camera_stats_frames / elapsed:.1f} FPS "
+      stats += f"({self.camera_stats_conversion_s * 1000 / self.camera_stats_frames:.2f} ms RGB→NV12, "
+      stats += f"{camera_count} camera{'s' if camera_count > 1 else ''})"
+      print(stats)
+      self.camera_stats_start = now
+      self.camera_stats_frames = 0
+      self.camera_stats_conversion_s = 0.0
 
   def update(self, simulator_state: 'SimulatorState', world: 'World'):
     now = time.monotonic()
