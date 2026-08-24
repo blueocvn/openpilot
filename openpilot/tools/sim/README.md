@@ -45,6 +45,12 @@ options:
 The CARLA bridge has its own setup and launcher. See
 [the CARLA installation guide](carla/installation.md).
 
+CARLA scenes are opt-in and use descriptive snake_case module names. To run
+the short obstacle scene:
+``` bash
+./run_bridge.py --simulator carla --carla-scene blocked_by_front_obstacles
+```
+
 ## MetaDrive
 
 ### Launching Metadrive

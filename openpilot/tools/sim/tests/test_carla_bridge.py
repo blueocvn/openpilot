@@ -13,6 +13,10 @@ from openpilot.common.params import Params
 from openpilot.tools.sim.bridge.carla.carla_bridge import CarlaBridge
 from openpilot.tools.sim.bridge.carla.carla_world import CarlaWorld
 from openpilot.tools.sim.bridge.common import control_cmd_gen
+from openpilot.tools.sim.bridge.carla.scenes.blocked_by_front_obstacles import (
+  OBSTACLE_DISTANCE,
+  OBSTACLE_OFFSETS,
+)
 
 
 class FakeImage:
@@ -25,6 +29,12 @@ def test_carla_bgra_to_rgb():
   rgb = CarlaWorld._rgb(FakeImage())
   np.testing.assert_array_equal(rgb, [[[255, 0, 0], [0, 255, 0]]])
   assert rgb.flags.c_contiguous
+
+
+def test_blocked_by_front_obstacles_scene_geometry():
+  assert OBSTACLE_DISTANCE > 0
+  assert len(OBSTACLE_OFFSETS) > 1
+  assert OBSTACLE_OFFSETS[0] < 0 < OBSTACLE_OFFSETS[-1]
 
 
 @pytest.mark.slow
