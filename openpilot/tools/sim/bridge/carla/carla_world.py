@@ -72,6 +72,36 @@ class CarlaWorld(World):
     # resolve against an identity frame.
     self.world.tick()
 
+    # Spawn a deterministic, high-visibility sedan on the centerline of the
+    # ego lane. Advancing the spawn transform's forward vector can put the lead
+    # off-lane on curved/elevated roads, which both confuses Traffic Manager and
+    # presents an unrealistic target to the driving model.
+    self.lead_distance = float(os.environ.get("CARLA_LEAD_DISTANCE", "25.0"))
+    self.lead_speed = float(os.environ.get("CARLA_LEAD_SPEED", "5.0"))
+    self.traffic_manager_port = int(os.environ.get("CARLA_TM_PORT", "8000"))
+    self.traffic_manager = self.client.get_trafficmanager(self.traffic_manager_port)
+    self.traffic_manager.set_synchronous_mode(True)
+
+    lead_bp = self.world.get_blueprint_library().find("vehicle.lincoln.mkz_2020")
+    if lead_bp.has_attribute("role_name"):
+      lead_bp.set_attribute("role_name", "lead")
+    if lead_bp.has_attribute("color"):
+      lead_bp.set_attribute("color", "255,0,0")
+    lead_transform = self._lead_spawn_transform()
+    self.lead_vehicle = self.world.try_spawn_actor(lead_bp, lead_transform)
+    if self.lead_vehicle is None:
+      raise RuntimeError("Could not spawn CARLA lead vehicle")
+    self.actors.append(self.lead_vehicle)
+    # Let CARLA drive the NPC normally. We temporarily take over only for the
+    # scripted stop phase below, so the lead vehicle starts moving reliably.
+    self.lead_vehicle.set_autopilot(True, self.traffic_manager_port)
+    self.traffic_manager.set_desired_speed(self.lead_vehicle, self.lead_speed)
+    self._lead_elapsed = 0.0
+    self._lead_stopping = False
+    self.world.tick()
+    print(f"CARLA vision lead: vehicle={lead_bp.id}, distance={self.lead_distance:.1f} m, "
+          f"speed={self.lead_speed:.1f} m/s, traffic_manager_port={self.traffic_manager_port}")
+
     physics = self.vehicle.get_physics_control()
     self.max_wheel_angle = max(float(w.max_steer_angle) for w in physics.wheels)
     self.steer_ratio = 12.0
@@ -134,6 +164,29 @@ class CarlaWorld(World):
 
   def _sensor_transform(self):
     return self.carla.Transform(self.carla.Location(x=self.CAMERA_X, z=self.CAMERA_Z))
+
+  def _lead_spawn_transform(self):
+    ego_waypoint = self.world.get_map().get_waypoint(
+      self.spawn_transform.location,
+      project_to_road=True,
+      lane_type=self.carla.LaneType.Driving,
+    )
+    if ego_waypoint is None:
+      raise RuntimeError("Could not resolve ego spawn point to a driving lane")
+
+    lead_waypoints = ego_waypoint.next(self.lead_distance)
+    if not lead_waypoints:
+      raise RuntimeError(f"No driving lane {self.lead_distance:.1f} m ahead of ego spawn")
+
+    # Keep the lead on the same road/lane whenever CARLA returns alternatives
+    # near a junction. Town04 spawn 40 has a single result on the highway.
+    lead_waypoint = next(
+      (wp for wp in lead_waypoints if wp.road_id == ego_waypoint.road_id and wp.lane_id == ego_waypoint.lane_id),
+      lead_waypoints[0],
+    )
+    transform = lead_waypoint.transform
+    transform.location.z += 0.2
+    return transform
 
   def _local_from_world(self, world_location, inverse_matrix):
     """Convert a world-space location into vehicle-local meters."""
@@ -330,11 +383,30 @@ class CarlaWorld(World):
 
   def tick(self):
     try:
+      self._update_lead_vehicle()
       self.current_frame = self.world.tick()
       self._update_spectator()
     except RuntimeError as exc:
       self.status_q.put(QueueMessage(QueueMessageType.TERMINATION_INFO, str(exc)))
       self.exit_event.set()
+
+  def _update_lead_vehicle(self):
+    """Drive the NPC lead vehicle through a repeatable stop-and-go cycle."""
+    dt = self.FIXED_DELTA_SECONDS
+    self._lead_elapsed += dt
+    cycle = self._lead_elapsed % 36.0
+
+    stopping = 14.0 <= cycle < 22.0
+    if stopping and not self._lead_stopping:
+      # Take over from autopilot and brake to a complete stop for eight seconds.
+      self.lead_vehicle.set_autopilot(False, self.traffic_manager_port)
+      self.lead_vehicle.apply_control(self.carla.VehicleControl(throttle=0.0, brake=1.0))
+      self._lead_stopping = True
+    elif not stopping and self._lead_stopping:
+      # CARLA autopilot provides reliable forward motion and lane keeping.
+      self.lead_vehicle.set_autopilot(True, self.traffic_manager_port)
+      self.traffic_manager.set_desired_speed(self.lead_vehicle, self.lead_speed)
+      self._lead_stopping = False
 
   def read_state(self):
     pass
@@ -413,6 +485,15 @@ class CarlaWorld(World):
     self.vehicle.set_target_velocity(self.carla.Vector3D())
     self.vehicle.set_target_angular_velocity(self.carla.Vector3D())
     self.vehicle.set_transform(self.spawn_transform)
+    lead_transform = self._lead_spawn_transform()
+    self.lead_vehicle.set_autopilot(False, self.traffic_manager_port)
+    self._lead_elapsed = 0.0
+    self._lead_stopping = False
+    self.lead_vehicle.set_transform(lead_transform)
+    self.lead_vehicle.set_target_velocity(self.carla.Vector3D())
+    self.lead_vehicle.set_target_angular_velocity(self.carla.Vector3D())
+    self.lead_vehicle.set_autopilot(True, self.traffic_manager_port)
+    self.traffic_manager.set_desired_speed(self.lead_vehicle, self.lead_speed)
 
   def close(self, reason: str):
     if self.closed:
@@ -425,4 +506,5 @@ class CarlaWorld(World):
         if hasattr(actor, "stop"):
           actor.stop()
         actor.destroy()
+    self.traffic_manager.set_synchronous_mode(False)
     self.world.apply_settings(self.original_settings)

@@ -27,6 +27,27 @@ def test_carla_bgra_to_rgb():
   assert rgb.flags.c_contiguous
 
 
+class FakeLead:
+  def __init__(self, *, present=True, radar=False, model_prob=1.0, d_rel=10.0, v_lead=0.0):
+    self.present = present
+    self.radar = radar
+    self.modelProb = model_prob
+    self.dRel = d_rel
+    self.vLead = v_lead
+
+
+def test_carla_vision_aeb_ignores_non_vision_and_distant_leads():
+  requested_accel = 0.5
+  assert CarlaBridge.vision_aeb_accel(requested_accel, 5.0, FakeLead(radar=True)) == requested_accel
+  assert CarlaBridge.vision_aeb_accel(requested_accel, 5.0, FakeLead(model_prob=0.5)) == requested_accel
+  assert CarlaBridge.vision_aeb_accel(requested_accel, 5.0, FakeLead(d_rel=25.0)) == requested_accel
+
+
+def test_carla_vision_aeb_brakes_for_close_stopping_lead():
+  limited_accel = CarlaBridge.vision_aeb_accel(0.5, 1.8, FakeLead(d_rel=10.0, v_lead=0.8))
+  assert limited_accel < -0.7
+
+
 @pytest.mark.slow
 @pytest.mark.skipif(os.environ.get("CARLA_INTEGRATION") != "1", reason="requires a running CARLA server")
 @pytest.mark.parametrize("openpilot_longitudinal", [False, True])

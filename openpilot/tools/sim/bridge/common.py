@@ -130,6 +130,10 @@ Controls: steer={self.last_controls[0]:.2f} throttle={self.last_controls[1]:.2f}
 Openpilot: engageable={selfdrive_state.engageable} alert={selfdrive_state.alertType!r}
     """)
 
+  def limit_longitudinal_accel(self, requested_accel):
+    """Backend hook for simulator-specific safety limits."""
+    return requested_accel
+
   @abstractmethod
   def spawn_world(self, q: Queue, /) -> World:
     pass
@@ -263,6 +267,7 @@ Openpilot: engageable={selfdrive_state.engageable} alert={selfdrive_state.alertT
                                        self.simulated_car.sm['carParams'].openpilotLongitudinalControl)
         if self.openpilot_longitudinal:
           requested_accel = self.simulated_car.sm['carControl'].actuators.accel
+          requested_accel = self.limit_longitudinal_accel(requested_accel)
           actual_accel = self.simulated_car.sm['carState'].aEgo
           accel_error = requested_accel - actual_accel
           if manual_control_active:
@@ -362,6 +367,7 @@ Openpilot: engageable={selfdrive_state.engageable} alert={selfdrive_state.alertT
       if brake_out > 0.01 and hasattr(self, "brake_seen"):
         self.brake_seen.value = True
       self.world.apply_controls(steer_out, throttle_out, brake_out)
+
       self.world.read_state()
       self.world.read_sensors(self.simulator_state)
 
