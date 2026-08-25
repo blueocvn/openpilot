@@ -63,7 +63,7 @@ build_native_converter() {
 setup() {
   sudo apt-get update
   sudo apt-get install -y git-lfs curl clang build-essential
-  git lfs install --local
+  git lfs install --local --force
   git lfs pull
   if ! command -v uv >/dev/null 2>&1; then
     export UV_INSTALL_DIR="$STATE_ROOT/bin"
