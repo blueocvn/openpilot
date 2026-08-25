@@ -138,6 +138,8 @@ class SimulatedSensors:
       self.send_fake_driver_monitoring()
       self.last_dmon_update = now
 
-    if (now - self.last_perp_update) > 0.25:
+    # SERVICE_LIST wants peripheralState at 2 Hz. SubMaster fails freq_ok for
+    # publishing too fast as well as too slow, so this interval is 1/2 Hz.
+    if (now - self.last_perp_update) > 0.5:
       self.send_peripheral_state()
       self.last_perp_update = now

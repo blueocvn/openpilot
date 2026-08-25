@@ -29,6 +29,14 @@ def estimate_pickle_max_size(onnx_size):
 if arch == 'comma_arm64':
   tg_backend = 'QCOM'
   tg_flags = f'DEV={tg_backend} IMAGE=1 FLOAT16=1 NOLOCALS=1 JIT_BATCH_SIZE=0 OPENPILOT_HACKS=1'
+elif modeld_dev := os.getenv('MODELD_DEV'):
+  # Opt-in backend override for a PC with a GPU. The CPU build cannot hold
+  # MODEL_RUN_FREQ on a desktop: in the CARLA simulator it lands around 2 Hz,
+  # and controlsd then steers on a plan that is half a second stale, which
+  # reads as the car weaving. Left off by default so CI and machines without a
+  # working accelerator keep the CPU build.
+  tg_backend = modeld_dev
+  tg_flags = f'DEV={tg_backend}'
 else:
   tg_backend = 'CPU'
   tg_flags = f'DEV=CPU' if arch == 'Darwin' else 'DEV=CPU:LLVM'
@@ -106,7 +114,10 @@ for usbgpu in [False, True] if USBGPU else [False]:
   actions = Action(do_compile, "  [USBGPU] $TARGET") if usbgpu else [cmd, Action(do_chunk, "  [CHUNK] $TARGET")]
   node = lenv.Command(
     chunk_targets,
-    tinygrad_files + compile_modeld_script + driving_onnx_deps + [Value(chunk_targets), chunker_file],
+    # tg_devices_node carries the backend choice. Without it here a backend
+    # switch rewrites tg_input_devices.json but leaves this pickle compiled for
+    # the previous device, and modeld loads a mismatched pair.
+    tinygrad_files + compile_modeld_script + driving_onnx_deps + [Value(chunk_targets), chunker_file, tg_devices_node],
     actions,
   )
   if usbgpu:
