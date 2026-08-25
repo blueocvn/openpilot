@@ -85,6 +85,10 @@ class SelfdriveD:
     ignore = self.sensor_packets + self.gps_packets + ['alertDebug', 'lateralManeuverPlan']
     if SIMULATION:
       ignore += ['cabinCameraState', 'managerState']
+    if os.getenv("SIMULATOR") == "carla":
+      # CARLA renders one road camera by default. modeld selects the available
+      # narrow stream, so the intentionally absent wide camera is not a fault.
+      ignore += ['wideRoadCameraState']
     if REPLAY:
       # no vipc in replay will make them ignored anyways
       ignore += ['narrowRoadCameraState', 'wideRoadCameraState']

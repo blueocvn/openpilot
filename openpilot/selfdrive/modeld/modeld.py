@@ -167,11 +167,17 @@ class ModelState:
     for key in bufs.keys():
       ptr = np.frombuffer(bufs[key].data, dtype=np.uint8).ctypes.data
       yuv_size = self.frame_buf_params[key][3]
-      # There is a ringbuffer of imgs, just cache tensors pointing to all of them
-      cache_key = (key, ptr)
-      if cache_key not in self._blob_cache:
-        self._blob_cache[cache_key] = Tensor.from_blob(ptr, (yuv_size,), dtype='uint8', device=self.WARP_DEV)
-      self.full_frames[key] = self._blob_cache[cache_key]
+      if os.getenv('SIMULATION'):
+        # Simulator VisionIPC buffers are CPU shared memory, not CUDA device
+        # pointers. Copy them to the selected device before running the warp.
+        frame = np.frombuffer(bufs[key].data, dtype=np.uint8, count=yuv_size).copy()
+        self.full_frames[key] = Tensor(frame, device=self.WARP_DEV).realize()
+      else:
+        # There is a ringbuffer of imgs, just cache tensors pointing to all of them
+        cache_key = (key, ptr)
+        if cache_key not in self._blob_cache:
+          self._blob_cache[cache_key] = Tensor.from_blob(ptr, (yuv_size,), dtype='uint8', device=self.WARP_DEV)
+        self.full_frames[key] = self._blob_cache[cache_key]
 
     # Model decides when action is completed, so desire input is just a pulse triggered on rising edge
     inputs['desire_pulse'][0] = 0
@@ -421,7 +427,12 @@ def main(demo=False):
       modelv2_send.modelV2.meta.laneChangeDirection = DH.lane_change_direction
 
       fill_driving_model_data(drivingdata_send, modelv2_send)
-      fill_pose_msg(posenet_send, model_output, meta_main.frame_id, vipc_dropped_frames, meta_main.timestamp_eof, extrinsics_calibration_seen)
+      # Desktop CPU inference can run below the CARLA camera's fixed 20 Hz and
+      # therefore consume the newest frame after skipping one. The model output
+      # is still current and modelV2 is already considered valid; invalidating
+      # cameraOdometry here would cascade into calibration and every planner.
+      pose_dropped_frames = 0 if os.getenv("SIMULATOR") == "carla" else vipc_dropped_frames
+      fill_pose_msg(posenet_send, model_output, meta_main.frame_id, pose_dropped_frames, meta_main.timestamp_eof, extrinsics_calibration_seen)
       pm.send('modelV2', modelv2_send)
       pm.send('drivingModelData', drivingdata_send)
       pm.send('cameraOdometry', posenet_send)
