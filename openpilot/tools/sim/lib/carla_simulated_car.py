@@ -24,7 +24,9 @@ class CarlaSimulatedCar:
 
   def __init__(self):
     self.pm = messaging.PubMaster(['can', 'pandaStates'])
-    self.sm = messaging.SubMaster(['carState', 'carControl', 'carOutput', 'controlsState', 'carParams', 'selfdriveState'])
+    self.sm = messaging.SubMaster([
+      'carState', 'carControl', 'carOutput', 'controlsState', 'carParams', 'selfdriveState', 'radarState',
+    ])
     self.cp = self.get_car_can_parser()
     self.idx = 0
     self.params = Params()
