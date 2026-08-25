@@ -1,0 +1,412 @@
+{
+  "item_name": "Baseline sanity and determinism",
+  "category": "System integration",
+  "objective": [
+    "Demonstrate that the CARLA server, CARLA-openpilot bridge, simulated sensors and CAN, openpilot processes, and CARLA vehicle dynamics form a stable closed loop before any vehicle or motorcycle crossing actor is introduced.",
+    "Establish a no-hazard reference trajectory and quantified run-to-run repeatability envelope. Crossing-scenario results are admissible only when this gate passes.",
+    "Expose whether longitudinal motion is controlled by openpilot or by the bridge, so a later braking failure is attributed to the component that actually had actuator authority."
+  ],
+  "system_boundary": {
+    "inside": [
+      "CARLA 0.9.16 server physics, rendering, map, weather, ego blueprint, sensor actors, world tick, and ground-truth state.",
+      "The workspace CARLA bridge, including RGB conversion, camera queues, VisionIPC publication, simulated GNSS/IMU, simulated Honda CAN and panda state, engagement handshake, manual-override logic, actuator conversion, and bridge process scheduling.",
+      "openpilot v0.11.1 at commit 4df40d2c1946a57242230186edd073c4073060a6, including manager supervision, model inference, calibration/localization, planning, self-drive state, vehicle interface, lateral control, logging, and alerts.",
+      "The CARLA Tesla Model 3 ego vehicle dynamics, while the CAN interface presented to openpilot is a simulated 2022 Honda Civic radarless interface. This vehicle-interface/dynamics mismatch is part of the integration under test and must be recorded as a validity risk.",
+      "For the current baseline configuration, openpilot lateral commands have actuator authority, but longitudinal authority is outside openpilot: AlphaLongitudinalEnabled is false and the bridge emulates stock ACC with a bounded speed controller targeting 8.0 m/s."
+    ],
+    "outside": [
+      "Real vehicle sensors, production CAN buses, panda hardware timing, tire/road variability, actuator delays, driver behavior, and physical safety validation.",
+      "Motorcycle or vehicle crossing behavior; the baseline contains no hazard actors and only proves readiness for those tests.",
+      "Certification or evidence that the integration is safe for public-road use.",
+      "Longitudinal openpilot policy performance in the current configuration, because model or planner acceleration is not applied to the CARLA vehicle when openpilotLongitudinalControl is false."
+    ],
+    "decision_boundary": "A baseline failure blocks interpretation of all crossing runs. A baseline pass proves integration consistency only within the recorded simulation configuration; it is not proof of crossing-object safety or real-world safety."
+  },
+  "assumptions": [
+    "The test is research software-in-the-loop, openpilot remains a supervised ACC/automated-lane-centering system, and a simulated pass must not be represented as public-road approval.",
+    "The baseline route is a verified straight, single-lane segment with valid CARLA OpenDRIVE lane geometry, no junction, no traffic light, no parked or moving non-ego actor within the sensor or collision envelope, and sufficient distance for the full measurement window.",
+    "ClearNoon, Town10HD_Opt, spawn index 16, the Tesla Model 3 blueprint, dual 1928 x 1208 RGB cameras at 40-degree road and 120-degree wide fields of view, and fixed_delta_seconds = 0.05 s describe the present workspace defaults; every run must record the resolved values rather than rely on defaults.",
+    "The current bridge presents Honda Civic radarless CAN and safety configuration while simulating Tesla Model 3 physics. Results are integration-specific and must not be generalized to either production vehicle.",
+    "The existing test_carla_closed_loop smoke test proves only bridge startup, engagement, and ego speed above 1 m/s; it does not prove determinism, message integrity, lane keeping, or absence of spurious braking.",
+    "The exact Windows/WSL hardware, GPU driver, CARLA server build identifier, rendered-scene settings, openpilot model artifact hashes, and runtime process parameters are [uncertain] until captured by the required run manifest."
+  ],
+  "setup": {
+    "configuration_freeze": [
+      "Pin CARLA server and Python client to 0.9.16; pin openpilot to commit 4df40d2c1946a57242230186edd073c4073060a6; hash all modified and untracked bridge files, model artifacts, DBC files, Params, launch scripts, CARLA map/OpenDRIVE content, and scenario configuration.",
+      "Record OS/WSL version, CPU, GPU, GPU driver, renderer mode, process affinity if used, CARLA command line, Python environment lock hash, and whether the run is warm-reset or a full cold restart.",
+      "Use one authoritative client to tick the CARLA world. No second synchronous client may call tick."
+    ],
+    "deterministic_carla_initialization": [
+      "Enable synchronous_mode and fixed_delta_seconds = 0.05 s, explicitly set substepping = true, max_substep_delta_time = 0.01 s, and max_substeps >= 5 so fixed_delta_seconds <= max_substep_delta_time multiplied by max_substeps.",
+      "Apply synchronous settings before the world used for a repetition is loaded or reloaded, reload the world for every repetition, and recreate actors with batched synchronous commands. A transform-only reset is not sufficient for the determinism gate.",
+      "If Traffic Manager is used later, put it in synchronous mode and reset the same random_device_seed after every reload. The no-hazard baseline should not use Traffic Manager actors.",
+      "Set ClearNoon explicitly after every reload. Spawn only the hero vehicle and required sensors. Persist blueprint attributes and vehicle physics-control values in the manifest.",
+      "Attach CARLA collision and lane-invasion sensors even though the current bridge does not provide them, and log their CARLA frame and simulation timestamp."
+    ],
+    "sensor_and_bridge_integrity": [
+      "Run dual cameras because the supported launcher requests dual_camera. Keep sensor_tick = 0.05 s. Record both the original CARLA image.frame and the openpilot camera frameId; require an explicit one-to-one mapping instead of discarding the CARLA frame identifier.",
+      "Require each road and wide image used for a tick to have image.frame equal to the current CARLA world frame. Do not silently accept a later frame. Record queue overflow, stale-frame discard, timeout, conversion duration, and VisionIPC publication timestamp.",
+      "Record CARLA snapshot elapsed_seconds and delta_seconds, monotonic host time, camera SOF/EOF time, model receipt/output time, plan/control time, and actuator-application time in one trace so simulated-time determinism and wall-time performance are not conflated.",
+      "Prohibit keyboard/joystick input during measurement and log the manual_control_active flag as false."
+    ],
+    "execution": [
+      "Before measurement, run the existing RGB unit test and closed-loop smoke test; confirm manager, modeld, controlsd, selfdrived, card, calibration/localization, logger, and bridge are alive and error-free.",
+      "Allow stationary initialization, then require selfdriveState.active continuously for 5 simulated seconds before starting the 60 simulated-second measurement interval. Exclude initialization and engagement transients from tracking and comfort aggregates but report them separately.",
+      "Engineering gate: run at least 10 world-reload repetitions with the same seed/configuration and 5 full cold-start repetitions. Release gate: run 60 valid cold-start repetitions with zero hard safety/integration failure.",
+      "Save the CARLA recorder log, full openpilot rlog, road and wide video or lossless audit frames, ground-truth tables, run manifest, process logs, and derived metric file under one immutable run ID."
+    ]
+  },
+  "independent_variables": {
+    "held_constant_for_determinism": [
+      "CARLA and Python API version, openpilot commit and model hashes, bridge hash, map/OpenDRIVE hash, spawn transform, route, ego blueprint and physics parameters, camera geometry and post-processing, weather, fixed time step and substeps, renderer, Traffic Manager disabled, actor population, simulated CAN vehicle, cruise target, and host hardware/software stack.",
+      "Initial ego pose, linear and angular velocity, control state, ignition, calibration state, cruise/engagement sequence, analysis start condition, and 60 s simulated duration."
+    ],
+    "controlled_factors": [
+      "Restart class: world reload versus full CARLA, bridge, and openpilot cold restart.",
+      "Seed: use one fixed seed for strict repeatability. A secondary seed-invariance check may use at least three documented seeds even though no stochastic non-ego actor is present.",
+      "Renderer profile: visible/high-quality and headless/low-postprocess must be separate configurations; never aggregate them because image pixels and compute load differ.",
+      "Compute-load stress: nominal load and a separately identified resource-stress run may be compared, but only nominal runs enter the primary deterministic envelope."
+    ],
+    "future_baseline_matrix": [
+      "After the initial gate, repeat the no-hazard baseline at each ego speed planned for crossing experiments and at each camera/weather profile. Do not infer a pass at 8 m/s covers another speed or visibility condition.",
+      "If openpilot longitudinal control is enabled, treat it as a new system configuration, remove the bridge speed controller from actuator authority, and rerun the entire baseline before crossing tests."
+    ]
+  },
+  "observables": {
+    "carla_ground_truth": [
+      "World frame, simulation timestamp and delta, ego transform, center-of-mass pose, bounding box, linear/angular velocity, acceleration, wheel and vehicle physics parameters, applied VehicleControl, nearest driving waypoint, lane ID, lane width, lane-center lateral offset, heading error, collision events and impulses, lane-invasion events, and actor inventory.",
+      "For each camera: CARLA frame, timestamp, transform, intrinsics/blueprint attributes, queue arrival time, conversion time, selected/discarded status, and content checksum for diagnostic comparison."
+    ],
+    "openpilot_and_bridge": [
+      "roadCameraState, wideRoadCameraState, liveCalibration, livePose, cameraOdometry, modelV2, drivingModelData, longitudinalPlan, carState, carControl, carOutput, controlsState, selfdriveState, onroadEvents, carParams, pandaStates, can, sendcan, managerState, procLog, logMessage, and errorLogMessage.",
+      "Preserve logMonoTime, validity, alive/frequency status, source frame IDs, desired path/curvature/acceleration, actual speed/acceleration/steering, actuator commands, control state, engagement/disengagement reasons, alert text, process restarts, CPU/GPU timing, and bridge last_controls/openpilot_longitudinal/manual override state.",
+      "Record stock_cruise_speed = 8.0 m/s and carParams.openpilotLongitudinalControl. This boolean determines whether longitudinal observations evaluate openpilot or only the bridge-emulated stock controller."
+    ],
+    "derived_events": [
+      "Initialization complete, first valid camera pair, first valid model output, controls engageable, engagement, measurement start/end, any message gap, frame mismatch, process restart, alert, disengagement, lane crossing, collision, manual override, and timeout.",
+      "A traceable causal timeline from CARLA tick through camera/model/plan/control to the command applied at the next CARLA tick."
+    ]
+  },
+  "expected_safe_behavior": [
+    "The ego initializes without collision or overlap, openpilot processes become healthy, engagement occurs reproducibly, and the system remains active for the entire measurement interval without alert, process restart, or manual intervention.",
+    "The ego follows the verified straight lane without touching a lane boundary, oscillation, divergent steering, or spontaneous lane change. Heading, lateral position, speed, and actuator commands converge to stable values after the warm-up period.",
+    "The current bridge-owned longitudinal controller approaches and maintains 8.0 m/s smoothly. This behavior is expected from the integration, not evidence that openpilot would brake for a crossing object.",
+    "Every CARLA tick has the expected 0.05 s simulated-time increment; road and wide camera frames are paired to that tick; required openpilot streams are valid, in order, and near their declared service rates; model/control latency does not accumulate across the run.",
+    "Repeated runs from an identical manifest remain within the declared trajectory, speed, yaw, actuator, and timing envelopes."
+  ],
+  "relevant_openpilot_components": {
+    "interfaces": [
+      "cereal/services.py declares nominal full-stream rates: carState, carControl, controlsState, and selfdriveState at 100 Hz; modelV2, drivingModelData, longitudinalPlan, roadCameraState, and wideRoadCameraState at 20 Hz; liveCalibration at 4 Hz. Use full rlog rather than qlog when checking these rates because qlog is intentionally decimated.",
+      "tools/sim/lib/camerad.py converts CARLA RGB into the device-compatible padded NV12 layout and publishes VisionIPC plus camera-state messages.",
+      "tools/sim/lib/simulated_sensors.py publishes camera, IMU, GNSS, peripheral, and synthetic driver-monitoring data. Its host monotonic and wall-clock timestamps are not CARLA simulation timestamps, so explicit frame/time correlation is required.",
+      "tools/sim/lib/simulated_car.py publishes simulated Honda CAN and pandaStates and consumes carControl, controlsState, carParams, and selfdriveState."
+    ],
+    "decision_and_control": [
+      "modeld/modelV2 and drivingModelData for predicted path, motion, and model action stability; liveCalibration/livePose/cameraOdometry for geometry and ego-motion consistency; longitudinalPlan for planner output; controlsd outputs in carControl, controlsState, and carOutput; selfdrived state and onroadEvents for engagement and fault evidence.",
+      "The current CarlaBridge declares alpha_longitudinal_enabled = false. SimulatorBridge therefore applies openpilot steering but uses its own proportional throttle/brake controller around 8.0 m/s when carParams.openpilotLongitudinalControl is false.",
+      "The existing closed-loop test checks started, active, and vEgo > 1.0 m/s only. Extend it with frame integrity, sustained engagement, route tracking, collision/lane events, deterministic replay, and artifact assertions."
+    ],
+    "diagnostics": [
+      "managerState and procLog expose process liveness and resource problems; logMessage/errorLogMessage and onroadEvents expose faults; pandaStates, can, sendcan, carParams, and selfdriveState expose vehicle-interface and safety-configuration mismatch.",
+      "Use route replay or a deterministic log-replay comparison only as a component diagnostic. CARLA recorder playback is not a substitute for closed-loop reruns because playback moves recorded actors rather than re-evaluating the controller's causal effect."
+    ]
+  },
+  "applicable_standards_and_prior_work": [
+    "CARLA's official synchrony/time-step guidance is directly applicable. It says precision requires synchronous mode with a fixed step, compatible physics substeps, synchronous settings before loading/reloading, world reload for every repetition, batched commands, and a reset Traffic Manager seed when Traffic Manager is used.",
+    "CARLA's recorder, Python API, and benchmarking guidance support per-frame ground truth, collision/lane-invasion event logging, replay for diagnosis, and explicit FPS/compute-load characterization. Recorder replay is diagnostic and must not be confused with deterministic closed-loop re-execution.",
+    "ISO 11270:2014 provides lane-keeping system functionality and test-procedure context. It also makes clear that lane keeping support is not automatic driving and driver responsibility remains; project lane-error thresholds below are engineering proposals, not quoted certification limits.",
+    "ISO 15622:2018 provides ACC control, diagnostics, and test-procedure context, but its highway/free-flow scope and limited requirements for stationary or slow objects do not establish pass criteria for urban crossing hazards. In the current bridge it does not validate openpilot longitudinal policy because the bridge owns longitudinal actuation.",
+    "ISO 21448:2022 applies to functional insufficiencies in perception/processing and intended functionality for sensor-dependent ADAS. Its separation of technical malfunction from functional insufficiency supports the required attribution gate before retraining.",
+    "ISO 34502:2022 supplies a scenario-based safety-evaluation framework, but its stated ADS and limited-access-highway scope is not directly the openpilot urban crossing use case; use the process concepts, not a claim of conformance.",
+    "ASAM OpenSCENARIO can encode repeatable actor/scenario actions and OpenDRIVE describes road geometry. Their use improves scenario portability and traceability, while CARLA execution details and hashes remain necessary.",
+    "openpilot's SAFETY.md defines openpilot as supervised ACC and automated lane centering, describes driver override and constrained actuation, and identifies software-in-the-loop/hardware-in-the-loop/in-vehicle testing. This baseline is one software-in-the-loop layer only."
+  ],
+  "metrics": {
+    "validity_and_integrity": [
+      "Tick integrity: count delta_seconds values not equal to 0.05 s within numerical tolerance; count duplicate, skipped, or out-of-order world frames. Report count and longest gap.",
+      "Camera integrity: for each world tick, count missing road/wide frames, CARLA-frame mismatches, road-wide pairing mismatches, queue overflows, stale discards, and timeouts. Report counts per run and per 1,000 expected pairs.",
+      "Message health: for each required service, observed messages divided by expected messages over simulated time, median/P95/P99 inter-arrival interval, maximum gap, invalid-message count, and out-of-order logMonoTime count. Compare with declared full-service rates, not qlog rates.",
+      "Process health: process restart count, error/critical log count, maximum CPU/GPU/memory load, and real-time factor equal to simulated duration divided by wall duration. A slow real-time factor is diagnostic unless it produces data loss or violates a project latency limit."
+    ],
+    "closed_loop_tracking": [
+      "Lateral error e_y in meters: signed dot product of ego reference point minus nearest lane-center waypoint with the waypoint right vector. Report mean, RMS, P95 absolute, and maximum absolute e_y after warm-up.",
+      "Heading error in degrees: wrapped ego yaw minus lane-center yaw. Report mean, RMS, P95 absolute, and maximum absolute error.",
+      "Speed error in m/s: carState.vEgo minus 8.0 m/s for the current bridge-owned longitudinal controller. Report mean absolute, RMS, P95 absolute, maximum absolute, overshoot, and settling time into plus or minus 0.5 m/s.",
+      "Control tracking: desired versus measured curvature/lateral acceleration and commanded versus applied steering, throttle, and brake; report RMS/P95/max error and saturation fraction.",
+      "Smoothness: longitudinal and lateral acceleration in m/s^2 and jerk in m/s^3. Derive with a versioned low-pass/differentiation method and report RMS, P95, P99, and max; never compare jerk from different filters."
+    ],
+    "safety_events": [
+      "Collision count and maximum collision normal impulse in N s; lane-invasion count and lane markings crossed; disengagement, takeover, control mismatch, excessive-actuation, calibration, and camera/model fault counts.",
+      "Time active divided by measurement time, time to first valid camera pair/model output/engagement, and count/duration of any inactive interval."
+    ],
+    "repeatability": [
+      "Align repetitions by CARLA simulation timestamp with no dynamic-time warping. For each run against a designated reference, calculate RMS and maximum Euclidean position difference, absolute lateral-offset difference, speed difference, yaw difference, applied-control difference, and model path/action difference.",
+      "Report both within-world-reload and cold-start envelopes. Use median, P95, maximum, and the worst run ID; also report pairwise envelopes so reference-run selection cannot hide an outlier.",
+      "For hard-failure incidence, zero failures in n independent valid cold starts gives a one-sided exact 95% upper probability bound of 1 minus 0.05 raised to the power 1/n. At n = 60 this is approximately 4.87%. Do not claim a lower failure rate from only 10 repetitions."
+    ]
+  },
+  "pass_criteria": {
+    "status": "The numeric limits below are project-proposed engineering gates, not regulatory thresholds. They must be frozen before examining crossing outcomes and tightened after initial characterized data; loosening requires documented review and rerunning all affected scenarios.",
+    "per_run_hard_gates": [
+      "Manifest complete and identical to the approved configuration; world reload used; no non-ego actor; analysis interval is 60 simulated seconds after 5 seconds of continuous active state; no manual input.",
+      "Zero collision, zero lane invasion, zero process restart, zero error-level integration event, zero disengagement/inactive sample, zero safety mismatch, and zero actuator NaN or uncommanded saturation during the measurement interval.",
+      "Every CARLA step advances exactly one frame and 0.05 s; zero out-of-order/duplicate frame; zero missing camera pair; every selected road and wide image has CARLA frame equal to the current world frame; zero camera timeout or queue overflow.",
+      "For carState, carControl, controlsState, and selfdriveState, observed full-log count is at least 98% of 100 Hz expectation and no inter-arrival gap exceeds 30 ms. For road/wide camera state, modelV2, drivingModelData, and longitudinalPlan, count is at least 98% of 20 Hz expectation and no gap exceeds 150 ms. Any implementation-known lower rate must be declared and separately justified before the test.",
+      "After warm-up: lateral-error RMS <= 0.30 m, P95 absolute <= 0.50 m, and maximum absolute <= 0.75 m while the full ego footprint remains within the lane; P95 absolute heading error <= 2.0 degrees and maximum <= 4.0 degrees.",
+      "For the bridge-owned 8.0 m/s longitudinal loop after settling: mean absolute speed error <= 0.30 m/s, P95 absolute <= 0.50 m/s, and maximum absolute <= 1.0 m/s; P99 absolute longitudinal acceleration <= 1.5 m/s^2 and P99 absolute jerk <= 3.0 m/s^3. These longitudinal limits do not score openpilot policy.",
+      "P99 absolute lateral acceleration <= 1.5 m/s^2 and P99 absolute lateral jerk <= 3.0 m/s^3 on the verified straight segment; steering command saturation fraction = 0%."
+    ],
+    "repeatability_gates": [
+      "All 10 same-seed world-reload runs and all 5 cold-start engineering runs pass every per-run hard gate.",
+      "Across same-manifest repetitions, pairwise RMS ego-position difference <= 0.05 m and maximum <= 0.20 m; pairwise speed-difference RMS <= 0.10 m/s and maximum <= 0.30 m/s; pairwise maximum yaw difference <= 0.25 degrees.",
+      "Measurement-start engagement time differs by no more than 0.25 s across runs; derived P95 lateral error, P95 speed error, and P99 jerk each have a robust coefficient of variation <= 10%, unless their median magnitude is below the metric's numerical noise floor, in which case use the absolute envelopes above.",
+      "Pixel checksums may be retained as diagnostics, but exact RGB equality is not a pass gate across GPU/renderer builds. Model input geometry, frame identity, and closed-loop outputs are the safety-relevant repeatability gates."
+    ],
+    "release_gate": [
+      "Before treating the crossing campaign as release evidence, obtain 60 valid cold-start baseline repetitions with zero hard failure and all repeatability limits satisfied. This supports only an upper 95% failure-probability bound of approximately 4.87% for the tested configuration.",
+      "Any change to CARLA/Unreal, map, renderer, GPU driver, openpilot code/model, bridge, simulated vehicle, vehicle physics, camera transform/intrinsics, timing, Params, longitudinal authority, or control calibration invalidates the baseline and requires rerun."
+    ]
+  },
+  "fail_criteria": {
+    "hard_failure": [
+      "Any collision, lane invasion, unexplained disengagement, safety/control mismatch, process crash/restart, non-finite command, uncommanded actuator saturation, or violation of lane/speed/smoothness limits in an otherwise valid run.",
+      "Any same-manifest trajectory, speed, yaw, model, or actuator divergence beyond the repeatability envelope.",
+      "Any frame/data loss or synchronization violation that reaches model/control, or required stream validity/rate below its pass gate."
+    ],
+    "invalid_run_not_scored_as_policy_failure": [
+      "Incomplete manifest, wrong version/hash, world not reloaded, unexpected actor, occupied spawn, manual input, route not straight or insufficient length, map/lane ground-truth defect, camera frame mismatch, bridge timeout, logger loss, or host resource exhaustion that causes missed data.",
+      "CARLA/server crash, sensor creation failure, actor spawn failure, or a test-orchestrator error. Invalid runs must be repeated after cause correction and must remain visible in the audit ledger; they may not be silently deleted."
+    ],
+    "campaign_escalation": [
+      "One hard baseline failure immediately blocks crossing-result interpretation and opens a defect with the complete causal trace.",
+      "Any invalid-run rate above 5% in the most recent 20 attempts is itself an integration reliability failure, even if valid runs pass.",
+      "Do not average a hard safety failure away. Pass requires every valid run to meet hard gates; aggregate statistics characterize margin and repeatability only."
+    ]
+  },
+  "failure_attribution": {
+    "simulator_or_scenario": [
+      "Ground-truth state diverges before different commands are applied, world frame/delta changes, initial transforms/physics differ, actor inventory differs, or CARLA recorder and snapshot show a map/physics/spawn anomaly. Correct CARLA initialization or scenario generation; do not retrain.",
+      "If transform-only reset diverges but reload-world repetitions do not, attribute the failure to reset methodology, consistent with CARLA determinism guidance."
+    ],
+    "bridge_or_integration": [
+      "CARLA ground truth is stable but camera frame mapping, timestamps, calibration/intrinsics, CAN state, safety configuration, message rates, process lifecycle, or command conversion differ. Correct the bridge/interface and rerun baseline; do not retrain.",
+      "If throttle/brake behavior fails while carParams.openpilotLongitudinalControl is false, attribute primary responsibility to the bridge-emulated stock ACC and vehicle dynamics, not the openpilot longitudinal policy.",
+      "If desired openpilot steering is consistent but applied CARLA steering differs, inspect sign, steering ratio, max wheel angle, clipping, and Tesla/Honda dynamics mismatch."
+    ],
+    "perception_or_model": [
+      "Identical, correctly synchronized camera inputs and valid calibration produce unstable model paths/actions, or model output departs from lane ground truth before planning/control diverges. Reproduce with log replay and cold-start closed loop, verify model artifact determinism, then consider model/data remediation.",
+      "A rendering-domain mismatch may be a SOTIF/perception limitation rather than a software fault. It still requires controlled evidence across independent valid runs before changing training data."
+    ],
+    "policy_or_planning": [
+      "Model perception/path evidence is stable and adequate, but planned desired curvature/acceleration is unstable or unsafe. Confirm the relevant plan has actual actuator authority. Under the current stock-longitudinal baseline, acceleration-plan errors cannot explain applied throttle/brake.",
+      "Only after deterministic inputs, valid interfaces, and actuator authority are proven may a repeated decision defect be labeled policy/planning and considered for retraining."
+    ],
+    "control_or_vehicle_dynamics": [
+      "Desired plan/control is repeatable, but carControl/carOutput tracking or CARLA motion is not. Inspect controller tuning, rate/timing, steering conversion, saturation, simulated vehicle physics, and actuator delay; retraining policy is not the first action."
+    ],
+    "minimum_evidence_bundle": "For every failure, retain the run manifest, reference-run diff, CARLA ground truth and recorder, raw frame-to-world mapping, full rlog and video, model/plan/control trace, applied CARLA commands, process/resource logs, and an attribution decision signed by integration, controls, and ML reviewers."
+  },
+  "dataset_requirements": {
+    "purpose_and_unit": [
+      "This is primarily an evaluation and regression dataset, not automatically a training dataset. The atomic sample is a complete run; frames from one run are never treated as independent statistical trials.",
+      "Collect at least 10 same-seed reload runs plus 5 cold starts for engineering, and 60 valid cold-start runs for the release gate, each with a 60 s analyzed interval and preserved warm-up. At 20 camera pairs/s, 60 release runs yield about 72,000 analyzed road/wide frame pairs."
+    ],
+    "modalities": [
+      "Synchronized road and wide RGB/video, optional lossless audit frames, camera metadata, CARLA ground-truth ego pose/velocity/acceleration, nearest lane geometry, collision/lane events, full vehicle controls, CARLA recorder log, full openpilot rlog, model/planner/control messages, CAN/panda state, calibration/pose, process logs, and resource telemetry.",
+      "A frame-index table joining run ID, CARLA world frame/time, road and wide CARLA image frame, VisionIPC/openpilot frameId, monotonic timestamps, modelV2 receipt/output, plan/control message times, and applied-actuator world frame."
+    ],
+    "coverage_and_balance": [
+      "Primary stratum: one exact no-hazard configuration for strict determinism. Do not mix renderer, hardware, speed, weather, camera, map, vehicle, or longitudinal-authority profiles in one repeatability estimate.",
+      "Secondary strata should mirror every crossing-campaign speed, weather, camera profile, and longitudinal-authority configuration with no hazard. Keep equal run counts per stratum and preserve cold-start/reload labels.",
+      "Retain failed and invalid attempts in separate indexed partitions so dataset curation cannot hide integration instability."
+    ],
+    "splits_and_lineage": [
+      "Group splits by complete run and configuration lineage, never by random frame. Near-duplicate repeated frames from a run must stay together.",
+      "Suggested regression split: frozen golden reference runs, development runs used to tune integration, and untouched acceptance cold starts. If later used for ML, reserve runs from distinct captures and at least one renderer/weather/map stratum as an external holdout.",
+      "Manifest fields include immutable run ID; parent campaign; UTC time; seed; restart class; all code/model/config/map hashes; CARLA/Unreal/Python API version; machine/GPU/driver; actor blueprints and physics hashes; sensor transforms/intrinsics; Params; rates; weather; route; and artifact checksums."
+    ],
+    "storage": [
+      "Use immutable, content-addressed artifacts with a machine-readable schema/version, checksums, provenance, data-use classification, and retention policy. Store derived metrics separately from raw evidence so they can be recomputed.",
+      "Preserve full-rate logs for timing validation. A qlog alone is insufficient because services are deliberately decimated."
+    ]
+  },
+  "labeling_and_quality": {
+    "labels": [
+      "Run-level labels: valid/invalid, baseline pass/fail, hard-failure type, restart class, longitudinal authority, and final failure-attribution class.",
+      "Frame-level labels: CARLA frame/time, ego pose/bounding box/velocity/acceleration, lane ID/width/center offset/heading error, collision/lane-invasion state, active state, camera-pair integrity, model/plan/control availability, and applied actuator.",
+      "No-hazard label is generated from actor inventory plus verified route occupancy, not inferred only from the image."
+    ],
+    "ground_truth_and_quality_checks": [
+      "Use CARLA snapshot, map waypoint/OpenDRIVE, actor transforms, collision sensor, and lane-invasion sensor as simulator ground truth. Independently recompute lane offset from stored transforms and map geometry.",
+      "Automated acceptance checks require complete manifest, artifact checksums, monotonically increasing frames/timestamps, exact frame joins, expected sample counts, finite values, actor inventory, route validity, and agreement between CARLA speed and carState.vEgo within a frozen tolerance.",
+      "Visually audit the first/middle/last paired frames and every anomalous run; verify camera FOV/orientation, lane rendering, occlusion absence, and that the ego is on the intended lane. Two reviewers adjudicate any attribution that could trigger ML retraining."
+    ],
+    "uncertainty_handling": [
+      "Do not force-label a frame when map waypoint selection is ambiguous, CARLA ground truth disagrees with visible lane markings, or camera/control frame association is missing. Mark the run invalid with a reason and exclude it from pass statistics while retaining it in the audit ledger.",
+      "Report numerical precision, filtering method, timestamp source, and interpolation. Never interpolate across a missing frame to make an integrity gate pass."
+    ],
+    "leakage_prevention": [
+      "Never split adjacent frames or repeated captures of the same run across ML training and validation. Group by run, route segment, configuration, and scenario lineage.",
+      "Acceptance runs and golden regression routes remain unavailable for hyperparameter selection or threshold tuning. Any reuse moves them out of holdout status and requires a new holdout capture."
+    ]
+  },
+  "retraining_implications": {
+    "default_decision": "Do not retrain from a baseline failure. First correct simulator, timing, frame alignment, vehicle-interface, actuator-authority, or control problems and rerun the baseline.",
+    "trigger_for_ml_investigation": [
+      "All baseline integrity and deterministic gates pass; inputs, calibration, frame mapping, and model artifact hash are confirmed; the defect is reproduced in at least three independent valid cold-start runs and in offline log replay; and ground truth shows a model path/action defect before planning/control divergence.",
+      "The same defect appears on an untouched configuration/route holdout or across at least two independently captured visual strata, reducing the chance that one CARLA rendering artifact is being memorized.",
+      "For policy retraining specifically, prove the failing policy output has actuator authority. With current openpilotLongitudinalControl = false, longitudinal applied-control failures cannot trigger openpilot policy retraining."
+    ],
+    "possible_changes_after_trigger": [
+      "Add curated no-hazard negative examples only if the model shows false obstacle/stop behavior or unstable path prediction with verified images; include varied but physically consistent CARLA appearance and matched real-world-domain data to reduce simulator overfitting.",
+      "Adjust loss or sampling to penalize false braking, path oscillation, or temporal inconsistency only after checking that labels and causal timing are correct. Preserve safety constraints and do not train directly against bridge-controller artifacts.",
+      "Keep baseline data in a small, explicitly weighted regression slice; do not allow abundant straight-road frames to overwhelm rare crossing-hazard examples."
+    ],
+    "not_a_trigger": [
+      "A transform-only reset difference, message drop, frame mismatch, process fault, wrong camera geometry, CAN/safety mismatch, Tesla/Honda dynamics mismatch, controller tracking error, or bridge stock-ACC speed error.",
+      "A single failed run, a failed invalid run, or a change observed only after pass thresholds were tuned on the same acceptance data."
+    ]
+  },
+  "validation_and_regression": {
+    "offline": [
+      "Run schema/checksum validation, frame-join validation, metric recomputation, and deterministic log replay of model/planner/control components using frozen artifacts. Compare model path/action and controls to golden envelopes with explicit tolerances.",
+      "Unit-test BGRA-to-RGB conversion, RGB-to-NV12 layout, camera-pair timestamps, CARLA/openpilot frame mapping, speed/steering sign and units, actuator clipping, and reset/reload orchestration."
+    ],
+    "closed_loop": [
+      "Keep the existing startup/engagement/movement smoke test, then add a 60 s no-hazard baseline test with collision/lane sensors, stream-rate assertions, continuous active state, route metrics, and stored artifacts.",
+      "Run 10 deterministic reload repetitions in CI on capable CARLA hardware and a scheduled 60-cold-start qualification suite for releases. Separate visible/high-quality and headless profiles.",
+      "After any ML or policy change, run baseline first, then all clear-view and occluded vehicle/motorcycle crossing cases. A baseline regression blocks the entire suite."
+    ],
+    "safety_and_release_gates": [
+      "No candidate may improve crossing metrics by violating baseline lane keeping, comfort, engagement, or timing gates. Compare candidate and incumbent on the same frozen holdout plus newly generated independent seeds/configurations.",
+      "Require zero new hard failures, no statistically or practically meaningful degradation of baseline margins, complete failure-attribution review, and reproducible artifacts before promotion.",
+      "Version the pass thresholds and evaluation code. Approval must identify whether openpilot or bridge/stock longitudinal had authority."
+    ],
+    "rollback": [
+      "Retain the incumbent code, model, bridge, Params, environment lock, and golden dataset. If any post-promotion baseline or crossing regression appears, restore the complete incumbent configuration rather than only the model file.",
+      "A changed CARLA, renderer, GPU driver, map, camera, vehicle dynamics, DBC, or longitudinal-authority configuration requires requalification and cannot borrow a previous pass."
+    ]
+  },
+  "risks": [
+    "False confidence: a deterministic no-hazard pass establishes integration readiness, not motorcycle/vehicle crossing safety and not real-world performance.",
+    "Authority mismatch: current openpilot longitudinal control is disabled. Any claim that a crossing test evaluates openpilot braking policy would be invalid unless authority is changed and re-baselined.",
+    "Reset nondeterminism: the current bridge reset teleports the actor without reloading the world, whereas CARLA recommends world reload for reproducible repetitions.",
+    "Synchronization masking: the current camera selector accepts an image whose CARLA frame is later than the current world frame and discards original frame identity before publishing, so skipped frames can be hidden without added instrumentation.",
+    "Clock-domain error: CARLA simulation time, host monotonic time, GPS wall time, and openpilot logMonoTime are mixed; incorrect latency conclusions are likely without a frame/time join table.",
+    "Vehicle-model mismatch: Tesla physics with Honda CAN, steering ratio assumptions, and bridge actuator scaling can dominate trajectory behavior and limit transfer to a supported real car.",
+    "Synthetic sensor limitations: idealized/fake GNSS, IMU timing, driver monitoring, CAN, and calibration do not exercise production noise, delay, faults, or driver takeover.",
+    "Renderer and compute nondeterminism: GPU rendering and asynchronous host processes may vary even when CARLA physics is deterministic; exact pixel equality is neither guaranteed nor the sole relevant criterion.",
+    "Map-ground-truth risk: CARLA lane-invasion sensing depends on OpenDRIVE and may disagree with visible markings; route validation and visual audits are required.",
+    "Threshold overfitting: choosing tolerances after seeing acceptance runs or crossing failures invalidates the claimed gate.",
+    "Statistical overclaim: a small number of repeated passes gives a weak failure-rate bound; 60 zero-failure runs still only bound failure probability below about 4.87% at one-sided 95% confidence for the exact tested configuration.",
+    "Sim-to-real gap: CARLA appearance, traffic behavior, physics, latency, and motorcycle dynamics differ from reality; retraining solely on simulator data can reduce real-world robustness."
+  ],
+  "recommendations": [
+    "1. Freeze and emit a complete run manifest, including openpilot/bridge/model/map hashes and the longitudinal-authority boolean, before collecting any crossing data.",
+    "2. Fix the repetition lifecycle to follow CARLA determinism guidance: set synchronous/fixed-step/substep settings, reload the world for every repetition, recreate actors deterministically, and seed every stochastic component.",
+    "3. Add collision and lane-invasion sensors plus an explicit CARLA-world-frame to road/wide frame to model/plan/control/applied-command trace. Require exact frame pairing and expose queue drops instead of accepting later frames.",
+    "4. Extend the current smoke test into the stated 60 s no-hazard engineering gate and execute 10 reload plus 5 cold-start repetitions before the first crossing test.",
+    "5. Decide project scope explicitly: either evaluate the current system as openpilot lateral plus bridge-emulated stock longitudinal, or enable openpilot longitudinal authority. If the project goal is to decide whether openpilot policy needs retraining for crossing response, enable and verify openpilot longitudinal control, then rerun this entire baseline.",
+    "6. Validate that Town10HD_Opt spawn 16 leads to a straight, actor-free, sufficiently long segment; if not, create an explicit route and spawn transform rather than relying on index order.",
+    "7. Store full rlogs, videos/audit frames, CARLA recorder and ground truth, process logs, manifests, and derived metrics for every attempt, including invalid and failed runs.",
+    "8. Freeze project-proposed numeric gates before examining crossing outcomes, then qualify with 60 valid cold starts for release-level evidence. Report margins and the exact one-sided failure bound, not only pass/fail.",
+    "9. Use the causal attribution ladder simulator -> integration -> perception/model -> policy/planning -> control/dynamics. Retraining is permitted only after deterministic valid evidence reaches the model/policy trigger and the relevant output has actuator authority.",
+    "10. After baseline qualification, add a matching no-hazard control for every crossing-test speed, weather, camera, map, and longitudinal-authority stratum, and keep all holdout runs isolated from tuning."
+  ],
+  "sources": [
+    {
+      "title": "Synchrony and time-step",
+      "publisher_or_author": "CARLA Simulator documentation",
+      "url": "https://carla.readthedocs.io/en/latest/adv_synchrony_timestep/",
+      "publication_date": "Continuously maintained; accessed 2026-08-06",
+      "supported_claims": "Synchronous fixed-step operation, substep constraint, initialization-before-reload, per-repetition world reload, batched commands, and Traffic Manager seed requirements for physics determinism."
+    },
+    {
+      "title": "CARLA Python API reference",
+      "publisher_or_author": "CARLA Simulator documentation",
+      "url": "https://carla.readthedocs.io/en/latest/python_api/",
+      "publication_date": "Continuously maintained; accessed 2026-08-06",
+      "supported_claims": "World settings, sensor frame/timestamp fields, collision events, lane-invasion events, actor state, and recorder interfaces."
+    },
+    {
+      "title": "Retrieve simulation data",
+      "publisher_or_author": "CARLA Simulator documentation",
+      "url": "https://carla.readthedocs.io/en/latest/tuto_G_retrieve_data/",
+      "publication_date": "Continuously maintained; accessed 2026-08-06",
+      "supported_claims": "Recording, querying, replay, sensor data collection, and use of the recorder as a tracing tool."
+    },
+    {
+      "title": "Benchmarking Performance",
+      "publisher_or_author": "CARLA Simulator documentation",
+      "url": "https://carla.readthedocs.io/en/latest/adv_benchmarking/",
+      "publication_date": "Continuously maintained; accessed 2026-08-06",
+      "supported_claims": "Benchmarking synchronous/fixed-step configurations and reporting average and standard deviation of simulation performance."
+    },
+    {
+      "title": "openpilot SAFETY.md at v0.11.1 workspace baseline",
+      "publisher_or_author": "comma.ai",
+      "url": "https://github.com/commaai/openpilot/blob/4df40d2c1946a57242230186edd073c4073060a6/docs/SAFETY.md",
+      "publication_date": "2026-05-29 commit baseline; accessed 2026-08-06",
+      "supported_claims": "openpilot is supervised ACC and automated lane centering; driver override and actuator constraints; software-in-the-loop, hardware-in-the-loop, and in-vehicle test layers; ISO 11270/15622 context."
+    },
+    {
+      "title": "openpilot cereal service registry at v0.11.1 workspace baseline",
+      "publisher_or_author": "comma.ai",
+      "url": "https://github.com/commaai/openpilot/blob/4df40d2c1946a57242230186edd073c4073060a6/cereal/services.py",
+      "publication_date": "2026-05-29 commit baseline; accessed 2026-08-06",
+      "supported_claims": "Nominal message frequencies and qlog decimation for carState, controlsState, selfdriveState, camera states, modelV2, drivingModelData, longitudinalPlan, calibration, and diagnostic streams."
+    },
+    {
+      "title": "Workspace CARLA integration code and implementation log",
+      "publisher_or_author": "Project workspace; based on comma.ai openpilot v0.11.1",
+      "url": "file:///D:/work/openpilot/tools/sim/carla/IMPLEMENTATION_LOG.md",
+      "publication_date": "2026-08-05 to 2026-08-06",
+      "supported_claims": "CARLA 0.9.16 integration, fixed 0.05 s world step, Town10HD_Opt/ClearNoon defaults, dual camera bridge, simulated Honda CAN with Tesla dynamics, engagement lifecycle, and bridge-owned 8 m/s stock-longitudinal emulation. Verified against carla_world.py, carla_bridge.py, common.py, simulated_car.py, simulated_sensors.py, and test_carla_bridge.py in the same workspace."
+    },
+    {
+      "title": "ISO 11270:2014 - Intelligent transport systems — Lane keeping assistance systems (LKAS) — Performance requirements and test procedures",
+      "publisher_or_author": "International Organization for Standardization",
+      "url": "https://www.iso.org/standard/50347.html",
+      "publication_date": "2014-05",
+      "supported_claims": "Lane-keeping basic control, diagnostics and test-procedure context; lane keeping support is not automatic driving and driver responsibility remains."
+    },
+    {
+      "title": "ISO 15622:2018 - Intelligent transport systems — Adaptive cruise control systems — Performance requirements and test procedures",
+      "publisher_or_author": "International Organization for Standardization",
+      "url": "https://www.iso.org/standard/71515.html",
+      "publication_date": "2018-09",
+      "supported_claims": "ACC basic control, functionality, diagnostics and test procedures; highway/free-flow scope and limited treatment of stationary or slow objects."
+    },
+    {
+      "title": "ISO 21448:2022 - Road vehicles — Safety of the intended functionality",
+      "publisher_or_author": "International Organization for Standardization",
+      "url": "https://www.iso.org/standard/77490.html",
+      "publication_date": "2022-06",
+      "supported_claims": "Framework for hazards caused by intended-function specification or performance insufficiencies in sensor/algorithm-dependent safety functions and ADAS."
+    },
+    {
+      "title": "ISO 34502:2022 - Road vehicles — Test scenarios for automated driving systems — Scenario based safety evaluation framework",
+      "publisher_or_author": "International Organization for Standardization",
+      "url": "https://www.iso.org/standard/78951.html",
+      "publication_date": "2022-11",
+      "supported_claims": "Scenario-based safety-evaluation process and its stated limited-access-highway ADS scope."
+    },
+    {
+      "title": "ASAM OpenSCENARIO",
+      "publisher_or_author": "Association for Standardization of Automation and Measuring Systems",
+      "url": "https://www.asam.net/standards/detail/openscenario/",
+      "publication_date": "Continuously maintained; accessed 2026-08-06",
+      "supported_claims": "Machine-readable dynamic driving-scenario description and parameterization for repeatable virtual testing."
+    },
+    {
+      "title": "ASAM OpenDRIVE",
+      "publisher_or_author": "Association for Standardization of Automation and Measuring Systems",
+      "url": "https://www.asam.net/standards/detail/opendrive/",
+      "publication_date": "Continuously maintained; accessed 2026-08-06",
+      "supported_claims": "Logical road-network geometry representation used to support traceable lane and route definitions."
+    }
+  ],
+  "uncertain": [
+    "assumptions"
+  ]
+}

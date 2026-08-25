@@ -1,0 +1,102 @@
+topic: "CARLA-integrated openpilot response to motorcycle and passenger-car crossing hazards, including dataset design and ML policy retraining"
+
+items:
+  - name: "Integration architecture and timing fidelity"
+    category: "System integration"
+    description: >-
+      Define and evaluate the CARLA-to-openpilot bridge, camera and vehicle-state inputs,
+      actuator outputs, synchronization, latency, coordinate systems, vehicle model,
+      deterministic execution, and logging needed before policy behavior can be judged.
+
+  - name: "Baseline sanity and determinism"
+    category: "System integration"
+    description: >-
+      Establish no-hazard straight-driving and repeatability tests that prove the simulator,
+      bridge, perception, planning, and controls are operating consistently before crossing
+      scenarios are evaluated.
+
+  - name: "Passenger car crossing left to right with clear visibility"
+    category: "Core crossing scenario"
+    description: >-
+      Evaluate an unobstructed passenger car crossing the ego path from left to right over
+      a parameter sweep of ego speed, actor speed, initial range, crossing angle, and TTC.
+
+  - name: "Passenger car crossing right to left with clear visibility"
+    category: "Core crossing scenario"
+    description: >-
+      Evaluate an unobstructed passenger car crossing the ego path from right to left over
+      a parameter sweep of ego speed, actor speed, initial range, crossing angle, and TTC.
+
+  - name: "Motorcycle crossing left to right with clear visibility"
+    category: "Core crossing scenario"
+    description: >-
+      Evaluate an unobstructed motorcycle crossing the ego path from left to right, including
+      small-object perception limitations and a sweep of speed, range, angle, and TTC.
+
+  - name: "Motorcycle crossing right to left with clear visibility"
+    category: "Core crossing scenario"
+    description: >-
+      Evaluate an unobstructed motorcycle crossing the ego path from right to left, including
+      small-object perception limitations and a sweep of speed, range, angle, and TTC.
+
+  - name: "Passenger car emerging from occlusion"
+    category: "Adversarial crossing scenario"
+    description: >-
+      Evaluate a passenger car that becomes visible late because of parked vehicles,
+      buildings, vegetation, or other occluders, with controlled visibility onset and TTC.
+
+  - name: "Motorcycle emerging from occlusion"
+    category: "Adversarial crossing scenario"
+    description: >-
+      Evaluate a motorcycle that becomes visible late because of parked vehicles, buildings,
+      vegetation, or other occluders, emphasizing detection range and reaction latency.
+
+  - name: "Scenario parameter coverage and automated test generation"
+    category: "Test methodology"
+    description: >-
+      Design a reproducible scenario matrix and automated generation strategy spanning speeds,
+      ranges, TTC, crossing angles, road geometry, weather, illumination, friction, sensor
+      latency, occlusion, actor behavior, traffic density, and random seeds.
+
+  - name: "Safety comfort and pass-fail metrics"
+    category: "Evaluation methodology"
+    description: >-
+      Define measurable project goals and aggregation rules using collision, minimum TTC,
+      post-encroachment time, minimum separation, reaction time, stopping behavior, acceleration,
+      jerk, steering stability, completion rate, and repeated-run confidence.
+
+  - name: "Failure attribution and retraining decision"
+    category: "Evaluation methodology"
+    description: >-
+      Separate simulator, bridge, perception, prediction, planning-policy, and control failures;
+      define the evidence required before a failed run is attributed to policy and triggers
+      model retraining rather than an integration or subsystem fix.
+
+  - name: "Dataset specification collection and scenario sampling"
+    category: "ML dataset"
+    description: >-
+      Specify training and evaluation datasets from CARLA logs, difficult crossing cases,
+      counterfactuals, domain randomization, real-world complements, train-validation-test
+      splits, leakage prevention, class balance, metadata, and dataset versioning.
+
+  - name: "Labeling ground truth and dataset quality assurance"
+    category: "ML dataset"
+    description: >-
+      Define labels for object state, visibility, trajectories, conflict zones, risk, desired
+      behavior, interventions, and policy targets, plus automated QA, human review, edge-case
+      taxonomy, uncertainty, and acceptance gates.
+
+  - name: "Policy retraining validation and regression release gates"
+    category: "ML lifecycle"
+    description: >-
+      Design the retraining workflow from failure mining through data curation, training,
+      offline validation, closed-loop CARLA evaluation, regression testing, shadow comparison,
+      safety gates, rollback, and model-data lineage.
+
+execution:
+  batch_size: 3
+  items_per_agent: 1
+  # No output_dir: generate_report.py then defaults to the results/ directory
+  # next to this file. An absolute path here breaks the generator on any other
+  # machine, and it silently regenerates an empty report instead of failing.
+
