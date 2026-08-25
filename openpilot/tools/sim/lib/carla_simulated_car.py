@@ -124,7 +124,10 @@ class CarlaSimulatedCar:
     try:
       self.send_can_messages(simulator_state)
 
-      if self.idx % 50 == 0: # only send panda states at 2hz
+      # This runs on the 100 Hz car thread. SERVICE_LIST wants pandaStates at
+      # 10 Hz, and selfdrived does not ignore it under SIMULATION, so anything
+      # slower is a standing commIssue.
+      if self.idx % 10 == 0:
         self.send_panda_state(simulator_state)
 
       self.idx += 1

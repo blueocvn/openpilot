@@ -7,6 +7,29 @@ readonly LOG_ROOT="$STATE_ROOT/logs"
 export PATH="$STATE_ROOT/bin:$PATH"
 export PYTHONUNBUFFERED=1
 
+# tinygrad loads whichever libnvrtc it finds, and a CUDA toolkit newer than the
+# display driver produces PTX the driver's JIT rejects with
+# CUDA_ERROR_UNSUPPORTED_PTX_VERSION. Pinning a 12.8 nvrtc avoids that: it still
+# targets Blackwell (sm_120) but emits PTX every CUDA 12.8+ driver accepts.
+# The runtime package alongside it ships the CUDA headers (cuda_fp16.h and
+# friends) that nvrtc needs to compile the model's half-precision kernels --
+# this box has no full CUDA toolkit installed, only the driver's own runtime
+# libs, so nothing else on the system provides them.
+readonly NVRTC_PIN="nvidia-cuda-nvrtc-cu12==12.8.93"
+readonly CUDA_HEADERS_PIN="nvidia-cuda-runtime-cu12==12.8.90"
+readonly NVRTC_DIR="$STATE_ROOT/nvrtc"
+readonly NVRTC_LIB="$NVRTC_DIR/nvidia/cuda_nvrtc/lib/libnvrtc.so.12"
+readonly CUDA_HEADERS_DIR="$NVRTC_DIR/nvidia/cuda_runtime"
+
+use_pinned_nvrtc() {
+  [[ -f "$NVRTC_LIB" ]] || return 0
+  # tinygrad reads NVRTC_PATH first; LD_LIBRARY_PATH covers libnvrtc-builtins.
+  export NVRTC_PATH="$NVRTC_LIB"
+  export LD_LIBRARY_PATH="${NVRTC_LIB%/*}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  [[ -d "$CUDA_HEADERS_DIR/include" ]] && export CUDA_PATH="$CUDA_HEADERS_DIR"
+}
+use_pinned_nvrtc
+
 if [[ ! -f "$OPENPILOT_ROOT/pyproject.toml" ]]; then
   echo "Expected openpilot at $OPENPILOT_ROOT; WSL must use D:\\work\\openpilot." >&2
   exit 1
@@ -60,10 +83,61 @@ build_native_converter() {
   fi
 }
 
+cuda_runs_a_kernel() {
+  # Opening the device is not enough: compilation and module load are where a
+  # driver/toolkit mismatch actually fails, and float32 alone does not catch a
+  # missing cuda_fp16.h -- the model's kernels are half-precision. Compile and
+  # run one real kernel of each to know the actual build will work.
+  uv run --extra carla --extra tools python - <<'PY' >/dev/null 2>&1
+from tinygrad import Tensor, dtypes
+assert Tensor.ones(16, device="CUDA").contiguous().sum().item() == 16.0
+assert Tensor.ones(16, device="CUDA", dtype=dtypes.float16).contiguous().sum().item() == 16.0
+PY
+}
+
+select_modeld_device() {
+  # The driving model paces the whole control loop. openpilot's default PC
+  # build compiles it for CPU, where it manages ~2 Hz against the 20 Hz
+  # controlsd expects, so the car steers on a half-second-old plan and weaves.
+  # CARLA already requires a GPU, so build the model for it when one works.
+  # Set MODELD_DEV explicitly to override, including MODELD_DEV=CPU.
+  if [[ -n "${MODELD_DEV:-}" ]]; then
+    echo "modeld: building for $MODELD_DEV (MODELD_DEV set)"
+    return
+  fi
+  if ! command -v nvidia-smi >/dev/null 2>&1 || ! nvidia-smi -L >/dev/null 2>&1; then
+    echo "modeld: no NVIDIA GPU visible, using the CPU build" >&2
+    echo "modeld: the model will not hold 20 Hz; expect the car to weave" >&2
+    return
+  fi
+  if [[ ! -f "$NVRTC_LIB" ]] || [[ ! -d "$CUDA_HEADERS_DIR/include" ]]; then
+    echo "modeld: installing pinned nvrtc + CUDA headers ($NVRTC_PIN, $CUDA_HEADERS_PIN)"
+    uv pip install --target "$NVRTC_DIR" "$NVRTC_PIN" "$CUDA_HEADERS_PIN"
+    use_pinned_nvrtc
+    # tinygrad's kernel cache keys on source+arch, not on which nvrtc produced
+    # it. A prior attempt against the system CUDA toolkit (13.3, PTX the
+    # driver's JIT rejects) can leave broken entries that this pin would
+    # otherwise keep serving forever. Clear both cache locations this repo has
+    # used (default and run.sh's own XDG_CACHE_HOME) since this is the one
+    # point where we know the nvrtc in use just changed.
+    rm -f "${XDG_CACHE_HOME:-$HOME/.cache}/tinygrad/cache.db"{,-wal,-shm}
+    rm -f "$HOME/.cache/tinygrad/cache.db"{,-wal,-shm}
+  fi
+  if cuda_runs_a_kernel; then
+    export MODELD_DEV=CUDA
+    echo "modeld: CUDA compiles and runs, building the model for it"
+  else
+    echo "modeld: a GPU is present but tinygrad could not run a CUDA kernel;" >&2
+    echo "modeld: falling back to the CPU build, which will not hold 20 Hz." >&2
+    echo "modeld: to see the error, run:" >&2
+    echo "modeld:   uv run --extra carla --extra tools python -c 'from tinygrad import Tensor; Tensor.ones(16, device=\"CUDA\").contiguous().sum().item()'" >&2
+  fi
+}
+
 setup() {
   sudo apt-get update
   sudo apt-get install -y git-lfs curl clang build-essential
-  git lfs install --local
+  git lfs install --local --force
   git lfs pull
   if ! command -v uv >/dev/null 2>&1; then
     export UV_INSTALL_DIR="$STATE_ROOT/bin"
@@ -72,6 +146,7 @@ setup() {
   fi
   ./tools/op.sh setup
   uv sync --extra carla --extra tools
+  select_modeld_device
   # Current openpilot imports several generated modules as soon as manager
   # starts (rednose, longitudinal MPC, UI input metadata, and bootlog). Build
   # them during setup so a fresh clone is ready for its first simulator run.

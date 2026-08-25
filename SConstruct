@@ -124,7 +124,13 @@ env = Environment(
     "PYTHONPATH": os.pathsep.join(submodule_python_paths),
     "ACADOS_SOURCE_DIR": acados.DIR,
     "ACADOS_PYTHON_INTERFACE_PATH": acados.TEMPLATE_DIR,
-    "TERA_PATH": acados.TERA_PATH
+    "TERA_PATH": acados.TERA_PATH,
+    # Passed through, not set here, so subprocesses (tinygrad's modeld compile)
+    # see the same CUDA device/library selection as the shell that invoked
+    # scons. This ENV dict is an explicit allowlist -- SCons does not inherit
+    # the parent environment otherwise -- so anything spawned under scons
+    # silently loses these two if they are not named here.
+    **{k: os.environ[k] for k in ("NVRTC_PATH", "LD_LIBRARY_PATH", "CUDA_PATH") if k in os.environ},
   },
   CCFLAGS=[
     "-g",

@@ -1,0 +1,396 @@
+{
+  "item_name": "Passenger car crossing left to right with clear visibility",
+  "category": "Core crossing scenario",
+  "objective": "Establish whether the CARLA-integrated openpilot system avoids or safely yields to an unobstructed passenger car that crosses the ego path from left to right, and determine the boundary of safe behavior over ego speed, crossing-vehicle speed, initial time to conflict, range, and crossing angle. The result must also identify whether any failure belongs to simulation, bridge timing and actuation, model inference, policy-planning, or low-level control before retraining is considered.",
+  "system_boundary": {
+    "inside": [
+      "CARLA 0.9.16 world dynamics, ego Tesla Model 3 dynamics, crossing passenger-car actor, intersection geometry, collision and ground-truth state",
+      "The Windows CARLA to WSL2 openpilot bridge, including RGB camera capture, RGB-to-NV12 conversion, VisionIPC publication, simulated CAN/panda, GNSS/IMU publication, synchronization, engagement, actuator conversion, and logging",
+      "openpilot v0.11.1 at repository commit 4df40d2, including modeld, the driving vision and policy models, modelV2, longitudinal planning, controlsd, carControl, simulated vehicle interface, and safety state",
+      "Scenario generation, repeatability controls, metric computation, dataset capture, and failure attribution"
+    ],
+    "outside": [
+      "Real-vehicle sensor hardware, production vehicle brake hydraulics, tire behavior outside the calibrated CARLA model, driver supervision, regulatory approval, and public-road deployment",
+      "Occluded crossings, motorcycles, right-to-left crossings, pedestrians, traffic-signal compliance, adverse visibility, and multi-actor interactions; these belong to other research items",
+      "Claims that a CARLA pass certifies real-world safety or Euro NCAP performance"
+    ],
+    "decision_boundary": "A run is evidence about openpilot longitudinal policy only when an openpilot longitudinal mode is active and its commanded acceleration is actually converted to CARLA throttle and brake. In the current repository, CarlaBridge sets alpha_longitudinal_enabled=False and stock_cruise_speed=8.0 m/s, while bridge/common.py uses a bridge-owned proportional speed loop whenever carParams.openpilotLongitudinalControl is false. Therefore the current configuration is suitable for integration and shadow-policy observation, but it is not a valid closed-loop test of learned longitudinal policy. Any crossing failure in that configuration must be attributed first to test configuration or emulated stock ACC, not to the policy."
+  },
+  "assumptions": [
+    "Use the repository baseline documented locally as openpilot v0.11.1 commit 4df40d2 and CARLA 0.9.16; freeze these identifiers, the CARLA package hash, map hash, Python environment, model-file hashes, bridge configuration, and vehicle physics in every result manifest.",
+    "The crossing vehicle is visible from the first evaluated frame, lies inside the calibrated road or wide-road camera field of view, and has no physical or rendered occluder. Quantify visibility using projected ground-truth pixels rather than relying only on the scenario label.",
+    "The ego follows a straight lane-center path through an uncontrolled junction. The crossing passenger car follows a constant-speed straight path from ego-left to ego-right and, for the Euro NCAP reference subset, crosses at 90 degrees.",
+    "The no-response trajectories are synchronized to conflict: the ego front center would contact the crossing vehicle side at 25 percent of its length, matching the Euro NCAP CCCscp impact convention. For non-90-degree exploratory cases, define the conflict zone as the swept intersection of both oriented vehicle footprints.",
+    "Run the learned end-to-end longitudinal policy only in the openpilot mode that exposes and applies that policy. Chill and Experimental behavior must not be pooled because current openpilot releases can use different longitudinal policy paths.",
+    "No safety driver or manual keyboard input is permitted between scenario T0 and termination. A manual intervention is recorded as an intervention outcome and the autonomous run is failed or invalid according to whether it was needed for safety or caused by test-operator error.",
+    "A simulation failure is not automatically a policy-training example. Integration validity, camera timing, model execution, engagement, command propagation, and vehicle response must first pass the attribution checks in this record.",
+    "openpilot is an open-source driver-assistance research system, not an autonomous-driving certification target. The evaluation is a project acceptance test under a stated simulated ODD, not evidence for unsupervised real-world operation."
+  ],
+  "setup": {
+    "platform": [
+      "Run CARLA 0.9.16 natively on Windows and openpilot under Ubuntu WSL2 using the repository CARLA bridge. Confirm the ScenarioRunner branch matches CARLA 0.9.16 if ScenarioRunner is used.",
+      "Use synchronous CARLA mode with fixed_delta_seconds=0.05 s, one and only one tick-owning client, physics substepping compatible with the fixed step, and sensor_tick=0.05 s. The bridge already targets 20 Hz CARLA and camera updates; retain synchronized road and wide-road timestamps.",
+      "Use Town10HD_Opt only after selecting and surveying an intersection with straight, lane-centered approach and crossing paths. Add at least two other topologically distinct junctions to regression and training data, even though this item may use one primary controlled junction."
+    ],
+    "ego_and_openpilot": [
+      "Spawn the existing ego blueprint vehicle.tesla.model3, record its bounding box and complete physics control, mount the road camera at the repository transform x=0.8 m and z=1.13 m with 40-degree horizontal FOV, and enable the 120-degree wide camera because left-origin crossing hazards can enter outside the narrow camera first.",
+      "Publish roadCameraState and wideRoadCameraState at 20 Hz, CAN/carState/carControl at their configured 100 Hz rates, modelV2 and longitudinalPlan at 20 Hz, and preserve monotonic timestamps. Wait until modeld, controlsd, selfdrived, logging, both cameras, and simulated CAN are healthy before T0.",
+      "Create a dedicated evaluation configuration in which carParams.openpilotLongitudinalControl is true, the intended end-to-end longitudinal policy mode is active, and carControl.actuators.accel is the sole autonomous longitudinal command mapped to CARLA. Retain a separate stock-ACC configuration only as a bridge control experiment.",
+      "Calibrate the acceleration-to-throttle/brake mapping with no-hazard step and ramp tests over the required speed range. Log requested acceleration, applied throttle/brake, measured acceleration, delay, saturation, and stopping distance. Do not infer policy failure if the calibrated actuator cannot realize the request."
+    ],
+    "crossing_actor": [
+      "Spawn a representative passenger-car blueprint with known dimensions and stable physics. Test at least a sedan and an SUV or hatchback asset in regression to prevent single-mesh overfitting. Assign a stable actor ID and use deterministic trajectory control rather than Traffic Manager randomness for the core grid.",
+      "Accelerate the crossing actor before the evaluated interval, allow at least 0.5 s of constant-speed stabilization, then hold the target speed through the conflict zone. For the Euro NCAP reference subset, synchronize the no-response impact to ego-front-center versus 25 percent along the actor side.",
+      "Attach CARLA collision sensing to ego and record world snapshots, transforms, velocities, accelerations, bounding boxes, and control for both actors every simulation tick. Generate instance segmentation and depth only as label/quality channels; do not feed privileged sensors to openpilot."
+    ],
+    "run_sequence": [
+      "Reset the world, set ClearNoon, set dry-road friction and fixed vehicle physics, clear prior control state, then warm up inference and logging while stationary.",
+      "Bring the ego and crossing actor to their prescribed speeds before T0. Define T0 as the first valid frame at the prescribed initial time to conflict with all path, speed, camera, and engagement tolerances satisfied.",
+      "Run until collision, ego stop outside the conflict zone, crossing actor fully clears the ego swept path plus 2 s, ego safely clears the junction, or a fixed timeout. Continue logging for at least 2 s after the safety outcome to measure recovery and false re-acceleration.",
+      "Replay every deterministic cell at least three times and compare frame-level ground truth, camera hashes before dynamic divergence, model outputs, and outcome metrics. Use distinct explicit seeds for stochastic rendering or physics variants."
+    ]
+  },
+  "independent_variables": {
+    "sourced_reference_grid": {
+      "ego_speed_kmh": [20, 30, 40, 50, 60],
+      "crossing_vehicle_speed_kmh": [20, 30, 40, 50, 60],
+      "crossing_angle_deg": [90],
+      "direction": "Left to right in the ego coordinate frame",
+      "basis": "Euro NCAP AEB Car-to-Car protocol v4.3.1 CCCscp tests the combinations of VUT and GVT speeds from 20 to 60 km/h in 10 km/h increments, with straight perpendicular paths. Treat this as a benchmark subset, not as certification testing."
+    },
+    "project_extension_grid": {
+      "initial_time_to_conflict_s": [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0],
+      "crossing_angle_deg": [60, 75, 90, 105, 120],
+      "passenger_car_geometry": [
+        "Compact or sedan",
+        "SUV or tall hatchback"
+      ],
+      "initial_range_definition": "Do not sweep range independently from speed and time to conflict in a synchronized constant-speed case. Set ego distance-to-conflict approximately to ego_speed * initial_time_to_conflict and actor distance-to-conflict approximately to actor_speed * initial_time_to_conflict, then solve using oriented bounding-box entry times so both no-response footprints overlap at the selected impact point.",
+      "boundary_refinement": "After the coarse grid, use bisection or adaptive sampling in 0.1 s time-to-conflict increments around the transition between safe yield and conflict. Sample both sides of the discovered boundary and retain counterfactual actor-absent and actor-time-shifted pairs."
+    },
+    "controlled_variables": [
+      "ClearNoon weather, dry friction, no occluders, no background traffic, no traffic-light intervention, fixed camera exposure/post-processing setting, and no sensor noise for the core deterministic grid",
+      "Identical ego route, lane center, vehicle physics, camera calibration, policy mode, model hashes, bridge timing, target speed stabilization, and termination rules",
+      "Explicit seed, CARLA frame rate, physics substeps, rendering mode, and CPU/GPU execution configuration"
+    ],
+    "factorial_strategy": "Run the full 25-cell Euro NCAP speed grid at 90 degrees and a selected nominal initial time-to-conflict schedule that produces the reference collision geometry. For the wider angle and time-to-conflict design, use a coverage-preserving pairwise or Latin-hypercube design, then exhaustively refine critical boundary cells. Never average left-to-right results with the mirrored direction."
+  },
+  "observables": {
+    "carla_ground_truth": [
+      "Frame number, simulation timestamp, transforms, linear/angular velocity and acceleration, oriented bounding boxes, wheel and vehicle physics, traffic controls, friction, and control inputs for ego and crossing actor",
+      "Collision events with actor IDs, contact impulse and time; geometric footprint overlap; minimum polygon-to-polygon separation; ego and actor conflict-zone entry and exit times",
+      "Actor projected 2D box, pixel area, truncation, camera FOV membership, depth, instance mask, and visible fraction for both road and wide cameras"
+    ],
+    "openpilot_inputs_and_health": [
+      "Road and wide road image frame IDs, raw/encoded frame references, camera timestamps, VisionIPC timestamps, calibration transforms, frame age, dropped-frame percentage, and model execution time",
+      "can, carState, livePose, liveCalibration, liveDelay, carParams, pandaStates, selfdriveState, controlsState, process health, message validity/aliveness, and engagement events"
+    ],
+    "model_and_planning": [
+      "modelV2 position, velocity, acceleration, action.desiredAcceleration, action.desiredCurvature, action.shouldStop, leads/leadsV3 with probabilities and uncertainty, meta.hardBrakePredicted, confidence class, and raw prediction/model hash where permitted",
+      "longitudinalPlan speeds, accelerations, jerks, aTarget, shouldStop, allowBrake, allowThrottle, fcw, source, modelMonoTime, and processing delay"
+    ],
+    "control_and_vehicle_response": [
+      "carControl enabled/longActive/latActive state, requested acceleration and steering, carOutput actuator output, applied CARLA throttle/brake/steer, saturation or safety limiting, measured ego longitudinal/lateral acceleration, yaw rate, speed, stopping position, and resume behavior",
+      "Monotonic timestamps at sensor capture, bridge receipt, model output, plan output, control output, CARLA application, and measured response so the latency chain can be decomposed"
+    ],
+    "derived_events": [
+      "First actor visibility, first model response, first braking plan, first brake command, first measured deceleration, maximum braking, ego stop, actor clear, conflict-zone entry/exit, closest approach, collision, manual intervention, and scenario termination"
+    ]
+  },
+  "expected_safe_behavior": [
+    "The system remains engaged and lane-centered, recognizes the developing cross-traffic conflict early enough through its camera-driven policy, and reduces desired and actual longitudinal motion before the ego footprint enters the crossing vehicle's swept path.",
+    "For avoidable cases, ego yields outside the conflict zone, does not collide or geometrically overlap with the crossing vehicle, maintains the project clearance margin, and does not steer into another lane merely to avoid braking.",
+    "For high-urgency but physically avoidable cases, decisive braking may exceed comfort targets but must remain stable, monotonic enough to avoid throttle-brake oscillation, and within the calibrated actuator and friction envelope.",
+    "After the actor fully clears, ego remains stopped or slow until risk has passed, then resumes smoothly without a premature surge. A warning-only response is not sufficient when the project goal is autonomous closed-loop avoidance.",
+    "For a physically unavoidable late trigger, the preferred behavior is prompt maximum feasible mitigation, no destabilizing swerve, and a materially lower impact speed. Such a case is reported as unavoidable/mitigated and is not counted as a positive avoidance pass unless the project acceptance rules explicitly include mitigation."
+  ],
+  "relevant_openpilot_components": {
+    "input_bridge": [
+      "tools/sim/bridge/carla/carla_world.py: synchronous 0.05 s CARLA tick, ClearNoon, camera geometry, ego state, camera acquisition, and CARLA actuation",
+      "tools/sim/lib/camerad.py and simulated_sensors.py: RGB-to-NV12 conversion, synchronized camera timestamps, VisionIPC, roadCameraState/wideRoadCameraState, IMU/GNSS, and simulated sensor publication",
+      "tools/sim/lib/simulated_car.py and bridge/common.py: simulated Honda CAN/panda, engagement, carParams, control selection, longitudinal mode, command conversion, and manual override"
+    ],
+    "inference_and_policy": [
+      "selfdrive/modeld/modeld.py, fill_model_msg.py, parse_model_outputs.py, driving_vision.onnx and driving_policy.onnx: visual and temporal inference, trajectory, desired acceleration/curvature, stopping and lead-related outputs",
+      "cereal/log.capnp ModelDataV2: position/velocity/acceleration trajectories, leadsV3, hardBrakePredicted, policy action, confidence and execution metadata"
+    ],
+    "planning_and_control": [
+      "selfdrive/controls/plannerd.py and longitudinal_planner.py: longitudinalPlan generation and source selection",
+      "selfdrive/controls/controlsd.py and longcontrol.py: desired actuation, engagement, limiting and carControl publication",
+      "cereal services/logging: modelV2 and longitudinalPlan at 20 Hz; carState, controlsState and carControl at 100 Hz; radarState at 20 Hz when applicable"
+    ],
+    "critical_configuration_finding": "CarlaBridge currently sets alpha_longitudinal_enabled to false and stock_cruise_speed to 8.0 m/s. bridge/common.py then ignores the inactive openpilot acceleration sentinel and runs a bridge-owned speed controller when openpilotLongitudinalControl is false. This must be changed or bypassed in a controlled evaluation branch before closed-loop crossing results can support a policy-retraining decision."
+  },
+  "applicable_standards_and_prior_work": [
+    "Euro NCAP AEB Car-to-Car Test Protocol v4.3.1, section 8.2.4 CCCscp: straight lane-centered VUT and perpendicular GVT, no-response synchronization to ego front center versus 25 percent of target length, 0.5 s target-speed stabilization, speed combinations from 20 to 60 km/h, path tolerances, termination, and FCW-driver braking procedure. Use as a reference geometry and repeatability protocol only.",
+    "CARLA synchrony and time-step documentation: fixed time steps improve repeatable data collection; synchronous mode lets the client control advancement; only one client should tick; camera/sensor frames must correspond to the same simulation step.",
+    "CARLA sensor reference: sensor data includes frame and timestamp, CARLA uses x-forward/y-right/z-up in the sensor frame, IMU acceleration is m/s^2 and gyroscope output is rad/s. These conventions are required for traceable labels and metrics.",
+    "CARLA ScenarioRunner 0.9.16 and ASAM OpenSCENARIO parameterization: use version matching and externally assigned scenario parameters for reproducible speed, timing, angle and asset sweeps.",
+    "ISO 34502:2022 provides a scenario-based safety evaluation framework during ADS development, but its published scope is limited-access highways. It supports the methodology concept and does not supply intersection pass thresholds for this ADAS test.",
+    "Goff et al., Learning to Drive from a World Model, CVPR Workshops 2025: openpilot's end-to-end policy training is on-policy in reprojective or learned world-model simulation and maps observation/action history to next actions. This motivates closed-loop and counterfactual retraining rather than frame-only object-class fine-tuning.",
+    "The openpilot repository documents software-in-the-loop, replay, panda safety, and hardware-in-the-loop testing, and explicitly characterizes the software as alpha-quality research software. Candidate-policy release gates must retain those existing tests in addition to the CARLA matrix."
+  ],
+  "metrics": {
+    "safety_outcome": [
+      "Collision count and collision severity: count any CARLA collision event or verified oriented-bounding-box overlap; report contact impulse and ego/relative impact speed in m/s.",
+      "Minimum geometric separation d_min in meters: minimum distance between the oriented 2D footprints of ego and actor over all valid ticks; overlap is represented as zero or negative penetration depth in a separate field.",
+      "Conflict-zone occupancy: derive the polygon intersected by the actors' swept paths; record each footprint's entry and exit. Any simultaneous occupancy is a conflict even if CARLA collision callbacks miss contact.",
+      "Post-encroachment time in seconds: when the actor exits before ego enters, PET = t_ego_entry - t_actor_exit. Negative PET denotes overlapping occupancy. Also report the reverse ordering if ego passes first.",
+      "Time to closest approach: with relative position r and velocity v, t_CPA = max(0, -dot(r,v)/dot(v,v)); report predicted distance at CPA and actual closest approach. For crossing geometry also report each actor's time to conflict-zone entry, because one-dimensional following TTC is not sufficient."
+    ],
+    "response_and_timing": [
+      "Visibility-to-policy latency: first valid reduction in desired acceleration or shouldStop response minus first ground-truth visible frame. Define a response as desiredAcceleration <= -0.5 m/s^2 sustained for at least two 20 Hz model frames, a project measurement threshold rather than a sourced safety threshold.",
+      "Policy-to-plan, plan-to-command, command-to-application, and application-to-measured-deceleration latency in milliseconds, each computed from monotonic timestamps. Also report end-to-end visibility-to-measured-deceleration latency.",
+      "First-warning time and first-brake time relative to conflict-zone entry, plus time-to-conflict when braking begins. Distinguish modelV2 hardBrakePredicted/FCW from actual autonomous braking."
+    ],
+    "vehicle_dynamics_and_comfort": [
+      "Ego speed profile, stop-line/conflict-zone stopping margin in meters, peak and 95th-percentile longitudinal deceleration in m/s^2, peak lateral acceleration in m/s^2, yaw rate in rad/s, and maximum lane-center deviation in meters.",
+      "Longitudinal jerk in m/s^3 from a documented low-pass-filtered acceleration signal; report peak absolute jerk and 95th percentile, filter parameters, and unfiltered trace.",
+      "Control stability: count throttle/brake reversals, acceleration sign changes, saturation duration, and premature re-acceleration before actor clearance."
+    ],
+    "model_quality_proxies": [
+      "Crossing actor lead probability/position error when represented in leadsV3, predicted ego trajectory versus executed trajectory, desired-acceleration error relative to a safety-oracle trajectory, and uncertainty/confidence at decision time.",
+      "Because current openpilot is end-to-end and does not expose a complete modular object detector and cross-traffic predictor, absence from leadsV3 alone is not proof of perception failure. Use input ablation, counterfactual pairs, representation probes if available, and policy-action evidence together."
+    ],
+    "aggregation": [
+      "Report every cell, not only global means. Aggregate collision/conflict rate with an exact binomial confidence interval, and continuous metrics with median, 5th/95th percentiles, worst case, and bootstrap confidence intervals grouped by speed, time to conflict, angle, actor asset, intersection and seed.",
+      "Use paired comparisons for baseline versus candidate policy on identical scenario manifests. For zero failures in n independent stochastic trials, the one-sided 95 percent upper bound is 1 - 0.05^(1/n); 299 zero-failure trials are required to put this bound below 1 percent. Deterministic duplicate runs verify reproducibility but are not independent safety exposure."
+    ]
+  },
+  "pass_criteria": {
+    "prerequisite_validity_gates": [
+      "openpilot longitudinal control and the intended learned-policy mode are confirmed active from carParams, longitudinalPlan source, carControl and applied CARLA actuation; no bridge-owned stock speed controller controls the safety response.",
+      "All required processes and messages remain valid/alive; both camera streams correspond to the correct CARLA tick; no material frame drops, stale timestamps, manual input, safety disengagement, actuator mismatch, or missed simulator tick occurs in the evaluated interval.",
+      "Before autonomous intervention, ego and actor satisfy the defined speed and path tolerances. For the Euro NCAP reference subset, use the protocol's lane-path tolerance of 0 +/- 0.05 m and its applicable speed/timing tolerances."
+    ],
+    "hard_safety_gates_project_proposal": [
+      "Zero collision events and zero geometric footprint overlap in every required valid run.",
+      "Ego does not enter the conflict zone before the crossing actor clears; if ego stops, its footprint remains completely outside the crossing path, consistent with the Euro NCAP CCCscp stopping interpretation.",
+      "Minimum geometric separation is at least 0.50 m and PET is at least 1.00 s for avoidable nominal cases. These are conservative project proposals and must be approved against the project's simulated ODD; they are not quoted Euro NCAP thresholds.",
+      "Maximum lane-center deviation is no greater than 0.30 m and the ego remains in its lane. This is a project proposal; a deliberate evasive-steering feature would require a separate scenario and surrounding-lane safety proof.",
+      "No throttle is applied while predicted conflict remains active after braking starts, and no resume begins until the actor footprint clears the ego swept path plus a 0.5 s confirmation window."
+    ],
+    "comfort_and_timeliness_project_proposal": [
+      "For initial time to conflict of at least 3.5 s, measured peak deceleration should not exceed 4.0 m/s^2 in magnitude and peak filtered jerk should not exceed 5.0 m/s^3. Treat these as project comfort targets, not hard safety limits for shorter emergencies.",
+      "For shorter but physically avoidable cases, safety gates dominate comfort; record and review any deceleration above 6.0 m/s^2 or jerk above 10.0 m/s^3 as a secondary-control or late-response concern.",
+      "The response latency distribution and stopping margin must not degrade materially with actor asset or crossing angle; use the worst cell, not only an average."
+    ],
+    "statistical_rule": "Pass the complete 25-cell 90-degree speed reference grid with three deterministic repeats per cell and no hard-gate violation, then pass every defined project-extension acceptance cell with all required stochastic seeds. Invalid-run rate must be below 5 percent per configuration and every invalid run must be rerun after the cause is corrected. If the project claims a stochastic failure probability below 1 percent for a defined stratum, require at least 299 independent zero-failure runs in that stratum or an equivalently justified exact-binomial design. A CARLA pass remains a simulation acceptance result, not certification.",
+    "physical_unavoidability_rule": "Before labeling a late-trigger collision as policy failure, run a ground-truth safety oracle with the same measured friction, actuator delay, acceleration limits and initial state. If even the oracle cannot avoid, classify the cell as physically unavoidable and evaluate mitigation separately. Do not count it as an avoidance pass."
+  },
+  "fail_criteria": {
+    "safety_failure": [
+      "Any collision, geometric overlap, simultaneous conflict-zone occupancy, safety-clearance violation, lane departure, unstable evasive maneuver, or required manual rescue in a valid, oracle-avoidable run",
+      "Failure to stop outside the crossing path, premature acceleration before clearance, or a materially higher impact speed than the calibrated safety oracle in an unavoidable case",
+      "Any required acceptance cell that repeatedly violates the approved hard gate, even if the overall average passes"
+    ],
+    "system_or_invalid_run": [
+      "Wrong longitudinal mode, bridge stock-ACC control active, openpilot disengaged, camera or CAN messages stale, camera pair unsynchronized, excessive frame drop, model process lag/crash, CARLA tick mismatch, invalid calibration, actor trajectory outside tolerance, collision sensor inconsistency, or manual operator input not required by the safety protocol",
+      "Actor not genuinely visible as specified, target speed not stabilized, no-response geometry not synchronized, wrong crossing direction, wrong map/asset/version, or missing manifest/log channels",
+      "An invalid run is excluded from behavioral statistics, its cause is fixed, and the same manifest is rerun. Invalid runs are not silently converted to passes or policy failures."
+    ],
+    "escalation": "One high-severity valid failure stops candidate release and triggers attribution. It does not by itself authorize retraining. A policy-retraining trigger requires reproducibility, oracle avoidability, valid inputs, correct command application, and evidence that the unsafe choice originated in the learned policy rather than simulation, bridge, planner selection, safety limits, or actuator tracking."
+  },
+  "failure_attribution": {
+    "simulator_or_scenario": "Ground-truth actor path/speed/visibility is wrong, physics is nondeterministic beyond tolerance, collision callbacks disagree with geometry, the target penetrates road geometry, or the oracle outcome changes under identical initial state. Fix the scenario, map or CARLA configuration and rerun.",
+    "integration_and_timing": "Camera pixels, calibration, frame IDs, timestamps, CAN state or coordinate transforms do not match CARLA ground truth; longitudinal mode is false; the bridge stock speed loop is active; or carControl is not the command actually applied. The current stock-ACC bridge behavior falls here by design.",
+    "input_or_visual_understanding": "The actor is confirmed visible with adequate pixel area and correct camera delivery, but relevant model outputs/representations do not change against a matched actor-absent counterfactual and the policy remains unsafe. Since openpilot is end-to-end, call this a visual-understanding hypothesis unless a validated object probe demonstrates missed perception.",
+    "policy_planning": "Inputs and visual sensitivity are valid, the safety oracle can avoid, actuator capacity is sufficient, but modelV2 action/trajectory or the selected longitudinal plan continues into the conflict or brakes too late. Reproduce across at least two independent asset/intersection combinations before treating it as a general policy gap.",
+    "planner_or_mode_selection": "modelV2 proposes a safe stop, but longitudinalPlan selects another source, suppresses braking, or the wrong Chill/Experimental path is active. Fix configuration or planner arbitration before training the policy.",
+    "control_and_vehicle": "The policy and plan request adequate deceleration, but carControl, safety limits, actuator conversion, CARLA brake application, or ego dynamics fail to track the request within the calibrated delay and magnitude. Fix controller/plant/bridge mapping.",
+    "evidence_bundle": [
+      "Scenario manifest and software/model hashes",
+      "CARLA world and sensor ground truth",
+      "Raw road and wide images with frame/timestamp mapping",
+      "modelV2, longitudinalPlan, carControl, carOutput and applied CARLA controls",
+      "Safety-oracle replay and actor-absent/time-shifted counterfactual",
+      "Latency waterfall, metric trace, and deterministic reruns"
+    ]
+  },
+  "dataset_requirements": {
+    "modalities_and_rates": [
+      "Road and wide-road RGB at the actual 20 Hz policy input cadence, preserving pre-conversion images, exact NV12 buffers or hashes, frame IDs, calibration and monotonic timestamps",
+      "CARLA ground truth at every 20 Hz world tick: transforms, kinematics, oriented 3D boxes, actor IDs/classes, lights, controls, collision events, road topology, lane coordinates, conflict-zone geometry, depth and instance masks",
+      "openpilot CAN, carState, controlsState, carControl and applied actuators at 100 Hz; modelV2 and longitudinalPlan at 20 Hz; IMU/livePose, process health, engagement/mode and latency signals at native rates"
+    ],
+    "coverage_and_sampling": [
+      "Cover every ego speed, actor speed, time-to-conflict band, crossing angle, asset geometry and outcome stratum in the designed grid, with extra density within +/-0.5 s of the learned failure boundary.",
+      "Include safe yields, late but avoidable hazards, physically unavoidable mitigation cases, non-conflicting crossings, actor-absent junction passes, and time-shifted counterfactuals so the policy does not learn to brake for every visible side vehicle.",
+      "Balance by risk stratum and scenario rather than by frame. Cap long easy segments, retain pre-event context and at least 2 s post-event recovery, and weight rare high-severity cases without duplicating identical frames.",
+      "Add domain-randomized illumination, texture, camera photometrics, vehicle color/model, small calibration perturbations, friction and actuation delay only after the deterministic clear-visibility core is stable. Complement synthetic data with lawfully collected real crossing and near-crossing clips because CARLA appearance and behavior do not establish sim-to-real validity."
+    ],
+    "splits_and_leakage": [
+      "Split by complete scenario group, intersection topology/map region, actor asset family, rendered environment seed and source route; never split adjacent frames or counterfactual siblings across train and validation/test.",
+      "Freeze a development validation set, an unseen CARLA junction/asset test set, and a real-world complement holdout before mining failures. Keep exact acceptance seeds and all variants derived from them out of training.",
+      "Deduplicate using source-run ID, frame ancestry and perceptual hashes. Record parent-child lineage for counterfactuals, crops, relabels and generated variants."
+    ],
+    "metadata_and_storage": [
+      "Store scenario ID, direction, parameter values, seed, map/OpenDRIVE hash, actor blueprints and dimensions, camera/weather/physics configuration, CARLA/openpilot/bridge/model hashes, policy mode, label version, oracle version, and QA status in a machine-readable manifest.",
+      "Use immutable versioned object storage for images/log segments and Parquet or an equivalent typed columnar index for frame/event tables. Hash every artifact, preserve raw logs, and publish a dataset card describing scope, exclusions, synthetic/real proportions, known biases and license/privacy constraints.",
+      "A training sample must be traceable back to one raw run and forward to every model trained from it."
+    ]
+  },
+  "labeling_and_quality": {
+    "label_schema": [
+      "Per actor and frame: stable ID, passenger-car class and subtype, 3D box, pose, velocity, acceleration, yaw rate, camera projection, depth, occlusion/truncation, visible pixel fraction and in-FOV flags",
+      "Per scenario and frame: ego/actor time to conflict-zone entry, predicted footprint occupancy interval, actual entry/exit, PET, closest approach, separation, collision/impact state, physical avoidability and oracle braking envelope",
+      "Policy supervision: safe trajectory or action distribution, stopping margin, desired acceleration/curvature, should-stop state, conflict probability and recovery target. Preserve multiple valid safe behaviors rather than collapsing all cases to one hard-brake label.",
+      "Outcome taxonomy: safe unchanged pass, comfortable yield, emergency yield, mitigated unavoidable, collision, false-positive braking, premature resume, invalid integration, visual-understanding hypothesis, policy-planning failure, controller failure and simulator failure"
+    ],
+    "ground_truth_and_oracle": "Derive object and geometry labels directly from CARLA actor state and bounding boxes. Compute a constrained safety oracle using the measured ego plant, friction and latency; verify the oracle by replaying its action in CARLA. Treat human review as adjudication of semantic validity and alternative behavior, not as a replacement for precise simulator state.",
+    "quality_checks": [
+      "Project every 3D box and instance mask into both camera images and automatically reject labels with wrong axis sign, calibration, actor ID or more than one-frame timestamp mismatch.",
+      "Numerically verify speed/range/time-to-conflict consistency, crossing direction, path angle, impact point, conflict polygon, PET and collision against an independent geometry implementation on a sampled set.",
+      "Require complete native-rate streams, no unexpected frame gaps, valid hashes, correct mode/engagement, oracle replay success, and reproducibility within approved tolerance before a sample is eligible for training.",
+      "Double-review all collision, physically unavoidable and failure-attribution labels. Measure reviewer agreement on categorical attribution and resolve disagreements with the complete evidence bundle.",
+      "Represent partial visibility, sensor timing ambiguity and oracle ambiguity explicitly with confidence and exclusion flags. Never substitute an uncertain policy target into the safety-critical training subset."
+    ],
+    "acceptance_gates": "Accept a dataset release only when all required manifests and streams are complete, automated geometry/timing checks pass, zero train-test lineage leaks remain, 100 percent of safety-critical cases receive independent review, sampled 2D/3D projections meet the approved error tolerance, and class/risk coverage matches the dataset card. Any label-generation code change increments the label version and revalidates the frozen audit set."
+  },
+  "retraining_implications": {
+    "trigger": "Retraining is justified only after at least one hard safety failure is reproduced in three of five identical-seed reruns and in at least two independent combinations of intersection geometry or passenger-car asset, the safety oracle avoids from the same state, all validity gates pass, actor-sensitive model evidence is present, the intended policy controls longitudinal actuation, and downstream control tracks the request. A single valid collision still blocks release immediately, but may lead to an integration, planner or controller fix rather than retraining.",
+    "data_action": [
+      "Mine a balanced neighborhood around each confirmed policy boundary, including earlier/later actor arrival, actor absent, non-conflicting pass, mirrored direction held for separate evaluation, multiple assets and unseen-junction variants.",
+      "Add real-world crossing complements and domain-randomized synthetic variants to reduce CARLA texture and motion bias. Keep exact failing acceptance cases as frozen regression tests; train on related but non-identical generated cases.",
+      "Up-weight high-risk boundary sequences at the scenario level and retain long enough temporal context for left-origin actor appearance, conflict development, braking and safe resume."
+    ],
+    "objective_and_training_changes": [
+      "For an end-to-end policy, train closed-loop/on-policy in a simulator or world-model workflow rather than only adding frame-level detection labels. Supervise safe trajectory/action distribution and stopping margin, with auxiliary conflict-risk, time-to-conflict and no-premature-resume losses if the training architecture permits.",
+      "Penalize collision, conflict-zone overlap and insufficient clearance strongly while also penalizing false-positive braking on matched non-conflict counterfactuals. Use curriculum sampling from long time-to-conflict to boundary cases and preserve normal-driving performance.",
+      "Inject calibrated latency, friction and vehicle-response noise during on-policy training only within measured ranges. Do not let the policy exploit privileged CARLA labels or rendering artifacts at inference."
+    ],
+    "access_constraint": "[uncertain] The project's access to the training stack, optimizer, source datasets and deployment conversion used for the shipped comma driving_policy.onnx is not established by this repository. The public repository contains deployable model artifacts and inference code, while the cited work describes the training method. If the upstream training stack is unavailable, the project cannot responsibly claim to retrain the shipped policy; it must either obtain an authorized reproducible training pipeline, train and validate a separately owned policy, or treat the result as an evaluation and issue report.",
+    "non_training_alternatives": "If the evidence points to wrong policy-mode selection, missing longitudinal actuation, camera calibration/timing, planner arbitration, actuator saturation or controller delay, fix that subsystem and rerun the frozen suite. Do not mask these defects by training around them."
+  },
+  "validation_and_regression": {
+    "offline": [
+      "Run identical log/model replay for baseline and candidate with model hashes pinned. Compare desired trajectory, acceleration, shouldStop, hard-brake/lead proxies, latency and counterfactual actor sensitivity on the frozen validation and test sets.",
+      "Require no degradation on existing openpilot process replay, model replay, longitudinal maneuver, safety and simulator tests. Inspect calibration and camera preprocessing equivalence before attributing an offline difference to model weights.",
+      "Report metrics by time-to-conflict, speed, angle, asset, junction and synthetic/real source with confidence intervals; global improvement cannot hide a worse critical stratum."
+    ],
+    "closed_loop": [
+      "Run the candidate on the full deterministic 25-cell reference grid, all extension acceptance cells, boundary stress set, actor-absent false-positive set, mirrored/right-to-left regression, motorcycle regression, occlusion regression and baseline no-hazard suite.",
+      "Use paired scenario manifests and independent stochastic seeds. The candidate must have zero new hard-gate failures, must fix the targeted failure family on unseen assets/junctions, and must not increase invalid-run rate.",
+      "For every collision or near-boundary difference, replay the safety oracle and produce an attribution bundle before model selection."
+    ],
+    "release_gates": [
+      "Zero collision/conflict hard-gate failures in all required valid acceptance runs; no safety regression versus baseline in any frozen stratum; comfort/timing metrics within approved non-inferiority margins; and exact-binomial evidence matching any claimed failure-rate bound",
+      "Independent review of dataset lineage, training configuration, model conversion, safety case and rollback package; model and dataset cards updated; all artifacts reproducibly built and signed",
+      "Shadow evaluation and then closed-course vehicle testing with trained safety operators, hardware instrumentation and an independent emergency system before any public-road consideration. CARLA success alone is insufficient."
+    ],
+    "rollback": "Keep the baseline model, bridge, configuration and complete manifest deployable. Automatically block or roll back the candidate on any newly discovered hard safety regression, unexplained mode mismatch, model-conversion discrepancy or production telemetry anomaly. Preserve failed candidate artifacts for analysis rather than overwriting them."
+  },
+  "risks": [
+    "The current bridge does not apply openpilot longitudinal policy; without the prerequisite change, the central research conclusion would be invalid.",
+    "CARLA camera appearance, actor behavior, contact physics, tire/brake model and latency differ from real vehicles; a simulation pass can create false confidence.",
+    "A 40-degree road camera may see a left-origin crossing actor late. The wide camera is necessary, but its preprocessing and model use must match the selected openpilot configuration.",
+    "Crossing traffic is not equivalent to a same-lane lead. leadsV3 may not represent the actor, so naive detection-based attribution can misclassify an end-to-end policy failure.",
+    "Time to conflict, TTC and PET can be implemented incorrectly for crossing swept volumes, especially at non-90-degree angles. Independent geometry validation is required.",
+    "Full factorial sweeps grow quickly and repeated deterministic runs do not provide independent statistical evidence. Adaptive boundary sampling must not replace required acceptance cells.",
+    "Training only on CARLA failures can cause simulator overfitting, indiscriminate braking at intersections, degraded normal driving, or exploitation of rendering artifacts.",
+    "Using the acceptance seeds, adjacent frames or counterfactual siblings in training leaks the test and invalidates improvement claims.",
+    "Very short time-to-conflict cases may be physically unavoidable. Labeling all collisions as policy failures would train unrealistic targets and distort the decision boundary.",
+    "Changing the shipped openpilot policy without a reproducible authorized training/conversion pipeline, functional-safety process and closed-course validation introduces substantial real-world risk."
+  ],
+  "recommendations": [
+    "1. Before adding the crossing actor, create a dedicated evaluation branch/configuration that activates the intended learned longitudinal policy and proves carControl.accel reaches CARLA. Keep the existing stock-ACC path as a negative control and assert the active path in every run.",
+    "2. Add a deterministic ScenarioRunner/OpenSCENARIO left-to-right CCCscp-style scenario with explicit actor asset, 90-degree geometry, 25-percent side impact synchronization, speed stabilization, seed, parameter manifest and termination criteria.",
+    "3. Instrument the complete frame-to-actuator latency chain and ground-truth swept-footprint geometry. Add automated validity assertions that abort rather than score a run when camera, mode, path, speed or actuation prerequisites fail.",
+    "4. Execute the 20-60 km/h by 20-60 km/h reference grid at 90 degrees, then sweep time to conflict and 60-120-degree crossing angles with adaptive refinement around the safety boundary. Use at least sedan and SUV/hatchback targets.",
+    "5. Adopt the hard safety gates first: no collision, no conflict occupancy, approved separation/PET margin, no lane departure and no premature resume. Keep comfort thresholds explicitly secondary in short emergencies.",
+    "6. For every failure, automatically generate an actor-absent counterfactual, safety-oracle replay and synchronized attribution report. Never route an invalid or controller-caused failure into the policy dataset.",
+    "7. Build the versioned event-centric dataset with raw camera, native-rate openpilot logs, CARLA ground truth, lineage-safe splits, unseen junction/asset holdouts and real-world complements. Freeze acceptance cases before training.",
+    "8. Retrain only on a reproducible, authorized end-to-end/on-policy stack after the stated repeated cross-asset trigger is met. Optimize safe yield and false-positive counterfactual behavior together.",
+    "9. Gate any candidate through offline replay, full closed-loop crossing and non-crossing regression, existing openpilot safety/process tests, independent review, shadow comparison and closed-course testing, with a signed rollback model ready.",
+    "10. Report outcomes as CARLA project acceptance within a declared simulated ODD. Do not describe them as Euro NCAP certification or evidence for unsupervised public-road deployment."
+  ],
+  "sources": [
+    {
+      "title": "AEB Car-to-Car Test Protocol, Version 4.3.1",
+      "publisher_or_author": "Euro NCAP",
+      "url": "https://cdn.euroncap.com/cars/assets/euro_ncap_aeb_c2c_test_protocol_v431_532926aad1.pdf",
+      "publication_date": "February 2024",
+      "supported_claims": "CCCscp geometry, 25-percent side impact synchronization, target stabilization, 20-60 km/h speed matrix, path/speed validity conditions, termination, and the FCW brake-response reference."
+    },
+    {
+      "title": "Synchrony and time-step",
+      "publisher_or_author": "CARLA Simulator documentation",
+      "url": "https://carla.readthedocs.io/en/latest/adv_synchrony_timestep/",
+      "publication_date": "Continuously updated documentation; accessed 2026-08-06",
+      "supported_claims": "Fixed-step data collection, synchronous client-controlled ticking, single tick owner, sensor synchronization, physics substep constraints, and replay considerations."
+    },
+    {
+      "title": "Sensors reference",
+      "publisher_or_author": "CARLA Simulator documentation",
+      "url": "https://carla.readthedocs.io/en/latest/ref_sensors/",
+      "publication_date": "Continuously updated documentation; accessed 2026-08-06",
+      "supported_claims": "Sensor frame/timestamp fields, CARLA coordinate conventions, RGB camera data, collision sensing, and IMU units."
+    },
+    {
+      "title": "ScenarioRunner for CARLA",
+      "publisher_or_author": "CARLA Simulator project",
+      "url": "https://github.com/carla-simulator/scenario_runner",
+      "publication_date": "ScenarioRunner 0.9.16 released 2025-09-29",
+      "supported_claims": "Scenario definition/execution, CARLA-to-ScenarioRunner version matching, metrics access, and OpenSCENARIO support."
+    },
+    {
+      "title": "Parameters in ASAM OpenSCENARIO",
+      "publisher_or_author": "ASAM e.V.",
+      "url": "https://publications.pages.asam.net/standards/ASAM_OpenSCENARIO/ASAM_OpenSCENARIO_DSL/v2.0.0/migration/mg_parameters.html",
+      "publication_date": "OpenSCENARIO DSL 2.0.0 documentation; accessed 2026-08-06",
+      "supported_claims": "Externally varied scenario parameters, defaults, distributions and constraints for reproducible parameter sweeps."
+    },
+    {
+      "title": "ISO 34502:2022 Road vehicles - Test scenarios for automated driving systems - Scenario based safety evaluation framework",
+      "publisher_or_author": "International Organization for Standardization",
+      "url": "https://www.iso.org/standard/78951.html",
+      "publication_date": "2022-11",
+      "supported_claims": "Scenario-based evaluation during development and the important limitation that the published framework scope is limited-access highways."
+    },
+    {
+      "title": "openpilot repository README and Safety and Testing section",
+      "publisher_or_author": "comma.ai",
+      "url": "https://github.com/commaai/openpilot",
+      "publication_date": "Repository accessed 2026-08-06",
+      "supported_claims": "openpilot system scope, supported testing layers, safety-code role, data logging, and alpha-quality research disclaimer."
+    },
+    {
+      "title": "Learning to Drive from a World Model",
+      "publisher_or_author": "Mitchell Goff, Greg Hogan, George Hotz, Armand du Parc Locmaria, Kacper Raczy, Harald Schaefer, Adeeb Shihadeh, Weixing Zhang, and Yassine Yousfi; comma.ai",
+      "url": "https://openaccess.thecvf.com/content/CVPR2025W/DDADS/papers/Goff_Learning_to_Drive_from_a_World_Model_CVPRW_2025_paper.pdf",
+      "publication_date": "2025",
+      "supported_claims": "End-to-end driving policy formulation, on-policy training using reprojective and learned world-model simulators, closed-loop evaluation, and real ADAS deployment context."
+    },
+    {
+      "title": "NIST/SEMATECH e-Handbook: Confidence intervals for a proportion",
+      "publisher_or_author": "National Institute of Standards and Technology",
+      "url": "https://itl.nist.gov/div898/handbook/prc/section2/prc241.htm",
+      "publication_date": "Handbook page accessed 2026-08-06",
+      "supported_claims": "Use of exact binomial confidence intervals when failures or sample sizes are small."
+    },
+    {
+      "title": "Local CARLA bridge implementation and handoff log",
+      "publisher_or_author": "This openpilot project repository",
+      "url": "D:/work/openpilot/tools/sim/carla/IMPLEMENTATION_LOG.md",
+      "publication_date": "2026-08-05 to 2026-08-06",
+      "supported_claims": "Project baseline versions, Windows/WSL architecture, synchronized cameras, fixed 20 Hz CARLA loop, simulated stock ACC, openpilotLongitudinalControl=false behavior, and known actuation configuration constraints."
+    },
+    {
+      "title": "Local CarlaBridge and common simulator control implementation",
+      "publisher_or_author": "This openpilot project repository",
+      "url": "D:/work/openpilot/tools/sim/bridge/carla/carla_bridge.py and D:/work/openpilot/tools/sim/bridge/common.py",
+      "publication_date": "Inspected 2026-08-06 at repository commit 4df40d2 plus local CARLA integration changes",
+      "supported_claims": "alpha_longitudinal_enabled=false, stock_cruise_speed=8.0 m/s, branching on carParams.openpilotLongitudinalControl, bridge-owned stock speed loop, and acceleration-to-throttle/brake mapping."
+    },
+    {
+      "title": "Local openpilot message schema and service frequencies",
+      "publisher_or_author": "comma.ai openpilot repository",
+      "url": "D:/work/openpilot/cereal/log.capnp and D:/work/openpilot/cereal/services.py",
+      "publication_date": "Inspected 2026-08-06 at repository commit 4df40d2",
+      "supported_claims": "modelV2, longitudinalPlan and carControl fields used for observability and their configured publication/logging frequencies."
+    }
+  ],
+  "uncertain": [
+    "retraining_implications"
+  ]
+}

@@ -1,0 +1,107 @@
+field_categories:
+  - category: "Identity and scope"
+    fields:
+      - name: "item_name"
+        description: "Exact research item name."
+        detail_level: "brief"
+        required: true
+      - name: "category"
+        description: "Research item category."
+        detail_level: "brief"
+        required: true
+      - name: "objective"
+        description: "What this item must establish for the project."
+        detail_level: "moderate"
+        required: true
+      - name: "system_boundary"
+        description: "Components and behavior inside and outside the analysis boundary."
+        detail_level: "detailed"
+        required: true
+      - name: "assumptions"
+        description: "Explicit technical and operational assumptions, including openpilot limitations."
+        detail_level: "detailed"
+        required: true
+
+  - category: "Experimental design"
+    fields:
+      - name: "setup"
+        description: "Required CARLA, openpilot, bridge, map, actors, sensors, synchronization, and logging setup."
+        detail_level: "detailed"
+        required: true
+      - name: "independent_variables"
+        description: "Parameters to sweep or control, with recommended ranges when credible sources support them."
+        detail_level: "detailed"
+        required: true
+      - name: "observables"
+        description: "Ground-truth, model, planner, control, vehicle-state, timing, and event signals to record."
+        detail_level: "detailed"
+        required: true
+      - name: "expected_safe_behavior"
+        description: "Observable safe response expected from the integrated vehicle."
+        detail_level: "detailed"
+        required: true
+      - name: "relevant_openpilot_components"
+        description: "openpilot components, interfaces, logs, and model outputs relevant to the item."
+        detail_level: "detailed"
+        required: true
+
+  - category: "Evaluation"
+    fields:
+      - name: "applicable_standards_and_prior_work"
+        description: "Relevant standards, regulations, benchmarks, protocols, papers, and authoritative documentation."
+        detail_level: "detailed"
+        required: true
+      - name: "metrics"
+        description: "Metric definitions and calculation details, including units and aggregation."
+        detail_level: "detailed"
+        required: true
+      - name: "pass_criteria"
+        description: "Defensible item-level pass criteria and statistical aggregation rules; distinguish sourced thresholds from project proposals."
+        detail_level: "detailed"
+        required: true
+      - name: "fail_criteria"
+        description: "Defensible item-level failure conditions, invalid-run conditions, and escalation rules."
+        detail_level: "detailed"
+        required: true
+      - name: "failure_attribution"
+        description: "How evidence distinguishes simulator, integration, perception, prediction, policy-planning, and control failure."
+        detail_level: "detailed"
+        required: true
+
+  - category: "Dataset and ML lifecycle"
+    fields:
+      - name: "dataset_requirements"
+        description: "Data modalities, sampling, scenario coverage, balancing, splits, metadata, lineage, and storage requirements."
+        detail_level: "detailed"
+        required: true
+      - name: "labeling_and_quality"
+        description: "Ground-truth or label schema, quality checks, uncertainty handling, leakage prevention, and acceptance gates."
+        detail_level: "detailed"
+        required: true
+      - name: "retraining_implications"
+        description: "Whether and how evidence should change training data, objectives, model, or policy; include the trigger threshold."
+        detail_level: "detailed"
+        required: true
+      - name: "validation_and_regression"
+        description: "Offline and closed-loop validation, holdouts, regression suites, safety gates, and release/rollback rules."
+        detail_level: "detailed"
+        required: true
+
+  - category: "Decision support"
+    fields:
+      - name: "risks"
+        description: "Safety, validity, sim-to-real, implementation, and interpretation risks."
+        detail_level: "detailed"
+        required: true
+      - name: "recommendations"
+        description: "Concrete implementation and evaluation recommendations in priority order."
+        detail_level: "detailed"
+        required: true
+      - name: "sources"
+        description: "List of authoritative source objects containing title, publisher or author, URL, publication date when available, and supported claims."
+        detail_level: "detailed"
+        required: true
+
+uncertain:
+  description: "Reserved output array listing every field whose value contains [uncertain]."
+
