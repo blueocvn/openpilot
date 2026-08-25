@@ -40,6 +40,8 @@ def parse_args(add_args=None):
   # from every spawn point in both maps.
   parser.add_argument('--carla-town', default='Town04_Opt')
   parser.add_argument('--carla-spawn-point', type=int, default=40)
+  parser.add_argument('--carla-scene', default=None,
+                      help='optional CARLA scene module, for example blocked_by_front_obstacles')
   parser.add_argument('--launch-openpilot', action='store_true', help='start and own the simulator manager process')
 
   return parser.parse_args(add_args)
@@ -80,6 +82,7 @@ if __name__ == "__main__":
       'port': args.carla_port,
       'town': args.carla_town,
       'spawn_point': args.carla_spawn_point,
+      'scene': args.carla_scene,
       'openpilot_longitudinal': args.openpilot_longitudinal,
     }
   try:

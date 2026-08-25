@@ -31,7 +31,7 @@ class CarlaBridge(SimulatorBridge):
 
   def __init__(self, dual_camera, high_quality, host=None, port=2000,
                town="Town10HD_Opt", spawn_point=16, test_duration=math.inf, test_run=False,
-               openpilot_longitudinal=False):
+               openpilot_longitudinal=False, scene=None):
     self.alpha_longitudinal_enabled = openpilot_longitudinal
     super().__init__(dual_camera, high_quality)
     self.simulator_state.cruise_speed = self.stock_cruise_speed
@@ -41,7 +41,8 @@ class CarlaBridge(SimulatorBridge):
     self.spawn_point = spawn_point
     self.test_duration = test_duration
     self.test_run = test_run
+    self.scene = scene
 
   def spawn_world(self, queue: Queue):
     return CarlaWorld(queue, self.host, self.port, self.town, self.spawn_point,
-                      self.dual_camera, self.high_quality)
+                      self.dual_camera, self.high_quality, self.scene)

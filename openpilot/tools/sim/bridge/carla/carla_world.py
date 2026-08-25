@@ -28,7 +28,8 @@ class CarlaWorld(World):
   CAMERA_TIMEOUT = 5.0
   FIXED_DELTA_SECONDS = 0.05
 
-  def __init__(self, status_q, host, port, town, spawn_point, dual_camera=False, high_quality=False):
+  def __init__(self, status_q, host, port, town, spawn_point, dual_camera=False, high_quality=False,
+               scene=None):
     super().__init__(dual_camera)
     # Keep CARLA optional for users of the MetaDrive backend.
     import carla
@@ -40,6 +41,7 @@ class CarlaWorld(World):
     self.latest_imu = None
     self.current_frame = None
     self.closed = False
+    self.scene = scene or os.environ.get("CARLA_SCENE")
 
     self.status_q.put(QueueMessage(QueueMessageType.START_STATUS, f"connecting to CARLA at {host}:{port}"))
     self.client = carla.Client(host, port)
@@ -71,6 +73,9 @@ class CarlaWorld(World):
     # until the server steps, which would make world->vehicle conversions below
     # resolve against an identity frame.
     self.world.tick()
+    if self.scene:
+      from openpilot.tools.sim.bridge.carla.scenes import spawn_scene
+      self.actors.extend(spawn_scene(self.scene, self.world, self.vehicle, self.carla))
 
     physics = self.vehicle.get_physics_control()
     self.max_wheel_angle = max(float(w.max_steer_angle) for w in physics.wheels)
