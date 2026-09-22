@@ -24,11 +24,18 @@ def wsl_host():
   return "127.0.0.1"
 
 
+def startup_steering_angle(*, current_yaw_deg, target_yaw_deg):
+  """Map a CARLA heading error to a bounded steering-wheel angle command."""
+  heading_error = (target_yaw_deg - current_yaw_deg + 180.0) % 360.0 - 180.0
+  return float(np.clip(-8.0 * heading_error, -120.0, 120.0))
+
+
 class CarlaWorld(World):
   CAMERA_TIMEOUT = 5.0
   FIXED_DELTA_SECONDS = 0.05
 
-  def __init__(self, status_q, host, port, town, spawn_point, dual_camera=False, high_quality=False):
+  def __init__(self, status_q, host, port, town, spawn_point, dual_camera=False, high_quality=False,
+               scene="none", scene_case="alternating", scene_seed=42, scene_duration=45.0, report_dir=None):
     super().__init__(dual_camera)
     # Keep CARLA optional for users of the MetaDrive backend.
     import carla
@@ -40,6 +47,8 @@ class CarlaWorld(World):
     self.latest_imu = None
     self.current_frame = None
     self.closed = False
+    self.scene = None
+    self.scene_sm = None
 
     self.status_q.put(QueueMessage(QueueMessageType.START_STATUS, f"connecting to CARLA at {host}:{port}"))
     self.client = carla.Client(host, port)
@@ -59,6 +68,14 @@ class CarlaWorld(World):
     if not self.spawn_points:
       raise RuntimeError(f"CARLA map {town} has no spawn points")
     self.spawn_transform = self.spawn_points[spawn_point % len(self.spawn_points)]
+    if scene == "motorcycle_weave":
+      from openpilot.tools.sim.bridge.carla.scenes.motorcycle_weave import find_middle_driving_lane, relocated_spawn_height
+      spawn_waypoint = self.world.get_map().get_waypoint(
+        self.spawn_transform.location, project_to_road=True, lane_type=self.carla.LaneType.Driving)
+      middle_transform = find_middle_driving_lane(spawn_waypoint, self.carla.LaneType.Driving).transform
+      middle_transform.location.z = relocated_spawn_height(
+        self.spawn_transform.location.z, spawn_waypoint.transform.location.z, middle_transform.location.z)
+      self.spawn_transform = middle_transform
 
     vehicle_bp = self.world.get_blueprint_library().find("vehicle.tesla.model3")
     if vehicle_bp.has_attribute("role_name"):
@@ -81,6 +98,16 @@ class CarlaWorld(World):
     # feedforward with no loop to claw back the missing authority, so flatten it.
     physics.steering_curve = [self.carla.Vector2D(0.0, 1.0), self.carla.Vector2D(400.0, 1.0)]
     self.vehicle.apply_physics_control(physics)
+    if scene == "motorcycle_weave":
+      from openpilot.cereal import messaging
+      from openpilot.tools.sim.bridge.carla.scenes.motorcycle_weave import MotorcycleWeaveScene
+      self.scene = MotorcycleWeaveScene(
+        self.carla, self.world, self.vehicle, self.actors, case=scene_case, seed=scene_seed,
+        duration_s=scene_duration, report_dir=report_dir,
+      )
+      self.scene_sm = messaging.SubMaster([
+        "carState", "carControl", "carOutput", "selfdriveState", "longitudinalPlan", "modelV2",
+      ])
     # Axle offsets are fixed for the rigid body, so resolve them once at spawn.
     self._front_axle, self._rear_axle = self._axle_offsets()
     # CARLA renders debug shapes into the RGB sensors as well as the spectator
@@ -262,6 +289,23 @@ class CarlaWorld(World):
     )
     self.vehicle.apply_control(control)
 
+  def startup_steer(self):
+    transform = self.vehicle.get_transform()
+    waypoint = self.world.get_map().get_waypoint(
+      transform.location, project_to_road=True, lane_type=self.carla.LaneType.Driving,
+    )
+    if waypoint is None:
+      return 0.0
+    candidates = waypoint.next(8.0)
+    target = next((candidate for candidate in candidates
+                   if candidate.road_id == waypoint.road_id and candidate.lane_id == waypoint.lane_id), None)
+    if target is None:
+      return 0.0
+    location = target.transform.location
+    target_yaw = math.degrees(math.atan2(location.y - transform.location.y,
+                                         location.x - transform.location.x))
+    return startup_steering_angle(current_yaw_deg=transform.rotation.yaw, target_yaw_deg=target_yaw)
+
   def _update_spectator(self):
     """Position CARLA's visible spectator camera, per CARLA_SPECTATOR_MODE."""
     if self.spectator_mode == "orbit":
@@ -330,11 +374,36 @@ class CarlaWorld(World):
 
   def tick(self):
     try:
+      if self.scene is not None:
+        self.scene.before_tick(self._simulation_time())
       self.current_frame = self.world.tick()
+      if self.scene is not None:
+        self.scene.after_tick(self._simulation_time())
+        if self.scene.finished:
+          self.status_q.put(QueueMessage(QueueMessageType.TERMINATION_INFO, "CARLA scene completed"))
+          self.exit_event.set()
       self._update_spectator()
     except RuntimeError as exc:
       self.status_q.put(QueueMessage(QueueMessageType.TERMINATION_INFO, str(exc)))
       self.exit_event.set()
+
+  def set_openpilot_ready(self):
+    # The ego must roll and engage before a timed traffic scenario can anchor.
+    # record_openpilot() applies the stronger active-and-at-speed gate.
+    pass
+
+  def record_openpilot(self, _sm):
+    if self.scene is not None and self.scene_sm is not None:
+      self.scene_sm.update(0)
+      self.scene.record_openpilot(self.scene_sm)
+      from openpilot.tools.sim.bridge.carla.scenes.motorcycle_weave import scenario_ready
+      if scenario_ready(active=self.scene_sm["selfdriveState"].active,
+                        long_active=self.scene_sm["carControl"].longActive,
+                        ego_speed_mps=float(self.scene_sm["carState"].vEgo)):
+        self.scene.set_openpilot_ready(self._simulation_time())
+
+  def _simulation_time(self):
+    return float(self.world.get_snapshot().timestamp.elapsed_seconds)
 
   def read_state(self):
     pass
@@ -420,6 +489,8 @@ class CarlaWorld(World):
     self.closed = True
     self.status_q.put(QueueMessage(QueueMessageType.CLOSE_STATUS, reason))
     self.exit_event.set()
+    if self.scene is not None:
+      self.scene.close(self._simulation_time())
     for actor in reversed(self.actors):
       if actor.is_alive:
         if hasattr(actor, "stop"):

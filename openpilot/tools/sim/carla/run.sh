@@ -26,7 +26,10 @@ export CARLA_PORT="${CARLA_PORT:-2000}"
 # consistent with the CARLA Tesla rather than inheriting a test-car default.
 export FINGERPRINT="TESLA_MODEL_3"
 export SIMULATOR="carla"
-export SCALE="${SCALE:-3.0}"
+# The large tici UI is more readable on a desktop monitor. With SCALE unset,
+# GuiApplication fits its 2160x1080 layout to the available display.
+export BIG="${BIG:-1}"
+export CARLA_MONITOR_FULL_FRAME="${CARLA_MONITOR_FULL_FRAME:-1}"
 export BLOCK="${BLOCK:-},soundd"
 # Visible CARLA runs should also show the openpilot UI by default. Set
 # OPENPILOT_UI=0 explicitly for headless/integration runs.

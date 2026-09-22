@@ -83,6 +83,13 @@ class World(ABC):
   def set_openpilot_ready(self):
     """Allow simulator physics/traffic to start after openpilot is alive."""
 
+  def record_openpilot(self, sm):
+    """Record controller state when a backend owns a scenario recorder."""
+
+  def startup_steer(self):
+    """Return a safe steering command while the ego rolls toward first engagement."""
+    return 0.0
+
   def notify_reset(self):
     """Tell the common bridge to recreate the cruise/engagement edge."""
     self._reset_event.set()

@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import pyray as rl
 from openpilot.cereal import log
@@ -164,6 +166,7 @@ class AugmentedRoadView(CameraView):
     is_wide_camera = self.stream_type == WIDE_CAM
     intrinsic = device_camera.wide_road.intrinsics if is_wide_camera else device_camera.narrow_road.intrinsics
     calibration = self.view_from_wide_calib if is_wide_camera else self.view_from_calib
+    monitor_full_frame = os.getenv("CARLA_MONITOR_FULL_FRAME") == "1"
     zoom = 2.0 if is_wide_camera else 1.1
 
     # Calculate transforms for vanishing point
@@ -175,8 +178,13 @@ class AugmentedRoadView(CameraView):
     w, h = self._content_rect.width, self._content_rect.height
     cx, cy = intrinsic[0, 2], intrinsic[1, 2]
 
-    # Ensure zoom views the whole area
-    zoom = max(zoom, w / (2 * cx), h / (2 * cy))
+    if monitor_full_frame:
+      # Keep the full CARLA camera visible for desktop monitoring. The same
+      # zoom feeds both the video frame and model overlay transform below.
+      zoom = min(w / (2 * cx), h / (2 * cy))
+    else:
+      # Device UI deliberately fills the viewport, cropping the sensor edges.
+      zoom = max(zoom, w / (2 * cx), h / (2 * cy))
 
     # Calculate max allowed offsets with margins
     margin = 5

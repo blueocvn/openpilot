@@ -2,6 +2,7 @@
 import argparse
 import os
 import subprocess
+import sys
 
 from typing import Any
 from multiprocessing import Queue
@@ -30,6 +31,8 @@ def parse_args(add_args=None):
   parser.add_argument('--dual_camera', action='store_true')
   parser.add_argument('--openpilot-longitudinal', action='store_true',
                       help='let openpilot control CARLA throttle and braking instead of stock ACC')
+  parser.add_argument('--experimental-mode', action=argparse.BooleanOptionalAction, default=None,
+                      help='explicitly enable or disable openpilot experimental mode')
   parser.add_argument('--simulator', choices=('metadrive', 'carla'), default='metadrive')
   parser.add_argument('--carla-host', default=None, help='CARLA server host (default: CARLA_HOST or WSL gateway)')
   parser.add_argument('--carla-port', type=int, default=2000)
@@ -40,9 +43,24 @@ def parse_args(add_args=None):
   # from every spawn point in both maps.
   parser.add_argument('--carla-town', default='Town04_Opt')
   parser.add_argument('--carla-spawn-point', type=int, default=40)
+  parser.add_argument('--carla-scene', choices=('none', 'motorcycle_weave'), default='none')
+  parser.add_argument('--carla-scene-case', choices=('right_to_left', 'left_to_right', 'alternating'),
+                      default='alternating')
+  parser.add_argument('--carla-scene-seed', type=int, default=42)
+  parser.add_argument('--carla-scene-duration', type=float, default=45.0,
+                      help='simulated seconds; 0 runs until manually stopped')
+  parser.add_argument('--carla-report-dir', default=None,
+                      help='directory for CARLA scene event/ground-truth logs')
   parser.add_argument('--launch-openpilot', action='store_true', help='start and own the simulator manager process')
 
-  return parser.parse_args(add_args)
+  args = parser.parse_args(add_args)
+  if args.carla_scene_duration < 0.0:
+    parser.error('--carla-scene-duration must be nonnegative')
+  return args
+
+
+def should_poll_keyboard(*, joystick, stdin_isatty):
+  return not joystick and stdin_isatty
 
 if __name__ == "__main__":
   args = parse_args()
@@ -81,6 +99,12 @@ if __name__ == "__main__":
       'town': args.carla_town,
       'spawn_point': args.carla_spawn_point,
       'openpilot_longitudinal': args.openpilot_longitudinal,
+      'experimental_mode': args.experimental_mode,
+      'carla_scene': args.carla_scene,
+      'carla_scene_case': args.carla_scene_case,
+      'carla_scene_seed': args.carla_scene_seed,
+      'carla_scene_duration': args.carla_scene_duration,
+      'carla_report_dir': args.carla_report_dir,
     }
   try:
     queue, simulator_process, simulator_bridge = create_bridge(
@@ -92,11 +116,13 @@ if __name__ == "__main__":
       from openpilot.tools.sim.lib.manual_ctrl import wheel_poll_thread
 
       wheel_poll_thread(queue)
-    else:
+    elif should_poll_keyboard(joystick=False, stdin_isatty=sys.stdin.isatty()):
       # start input poll for keyboard
       from openpilot.tools.sim.lib.keyboard_ctrl import keyboard_poll_thread
 
       keyboard_poll_thread(queue)
+    else:
+      simulator_process.join()
   finally:
     if 'simulator_bridge' in locals():
       simulator_bridge.shutdown()

@@ -336,6 +336,7 @@ Openpilot: engageable={selfdrive_state.engageable} alert={selfdrive_state.alertT
       startup_throttle = (getattr(self, "startup_throttle", 0.0)
                           if openpilot_startup_ready and not self.past_startup_engaged
                           and not self.hold_car else 0.0)
+      startup_steer = self.world.startup_steer() if startup_throttle > 0.0 else 0.0
       # Keyboard/joystick input is an explicit simulator safety override. Keep
       # it available even while openpilot is engaged so a user can always move,
       # brake, or steer the ego vehicle from the bridge terminal.
@@ -356,7 +357,7 @@ Openpilot: engageable={selfdrive_state.engageable} alert={selfdrive_state.alertT
       else:
         throttle_out = max(throttle_manual, startup_throttle)
         brake_out = brake_manual
-        steer_out = steer_manual
+        steer_out = startup_steer
 
       self.last_controls = (float(steer_out), float(throttle_out), float(brake_out))
       if brake_out > 0.01 and hasattr(self, "brake_seen"):
@@ -372,6 +373,7 @@ Openpilot: engageable={selfdrive_state.engageable} alert={selfdrive_state.alertT
         self.shutdown()
 
       if self.rk.frame % self.TICKS_PER_FRAME == 0:
+        self.world.record_openpilot(self.simulated_car.sm)
         self.world.tick()
         self.world.read_cameras()
 
