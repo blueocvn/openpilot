@@ -32,13 +32,14 @@ class _SwitchCounter:
 
 def summarize_traffic_records(records):
   actual_jerk, requested_jerk = _BoundedValues(), _BoundedValues()
+  lateral_error, motorcycle_speed_error = _BoundedValues(), _BoundedValues()
   actual_switches, requested_switches = _SwitchCounter(), _SwitchCounter()
   first_time = last_time = first_contact_s = None
   previous_control = None
   previous_actual_accel = previous_requested = previous_comfort_time = None
   previous_active = None
   distance_m = 0.0
-  control_count = comfort_count = contact_event_count = disengagement_count = control_gap_count = 0
+  control_count = active_control_count = comfort_count = contact_event_count = disengagement_count = control_gap_count = 0
   contact_actor_ids = set()
   unknown_contact_count = 0
   minimum_gap = minimum_ttc = None
@@ -61,9 +62,18 @@ def summarize_traffic_records(records):
         first_contact_s = record.get("scene_time_s")
     if kind == "ground_truth":
       for actor in record.get("actors", []):
-        gap = actor.get("distance_to_ego_m") if actor.get("role", "cut_in") == "cut_in" else None
+        if actor.get("role", "cut_in") != "cut_in":
+          continue
+        gap = actor.get("distance_to_ego_m")
         if gap is not None and math.isfinite(gap):
           minimum_gap = gap if minimum_gap is None else min(minimum_gap, gap)
+        if first_contact_s is None or record.get("scene_time_s", math.inf) < first_contact_s:
+          lateral = actor.get("lateral_tracking_error_m")
+          if lateral is not None and math.isfinite(lateral):
+            lateral_error.add(abs(lateral))
+          speed, target_speed = actor.get("speed_mps"), actor.get("target_speed_mps")
+          if speed is not None and target_speed is not None and math.isfinite(speed) and math.isfinite(target_speed):
+            motorcycle_speed_error.add(abs(speed - target_speed))
     if kind not in ("ground_truth", "control_sample"):
       continue
     lead = record.get("openpilot", {}).get("radar_lead_one") or {}
@@ -84,6 +94,7 @@ def summarize_traffic_records(records):
     first_time = timestamp if first_time is None else first_time
     last_time = timestamp
     active = bool(record.get("openpilot", {}).get("long_active", False))
+    active_control_count += active
     if previous_active is True and not active:
       disengagement_count += 1
     previous_active = active
@@ -91,7 +102,7 @@ def summarize_traffic_records(records):
     if previous_control is not None:
       previous_time, previous_speed = previous_control
       dt = timestamp - previous_time
-      if dt <= 0 or dt > 0.25:
+      if dt <= 0 or dt > 0.15:
         control_gap_count += 1
       if dt > 0:
         distance_m += (previous_speed + speed) * dt / 2
@@ -118,6 +129,8 @@ def summarize_traffic_records(records):
 
     if first_contact_s is not None and timestamp >= first_contact_s:
       continue
+    if dt is not None and dt <= 0:
+      continue
     comfort_count += 1
     requested_switches.add(timestamp, request)
     if previous_requested is not None and previous_comfort_time is not None:
@@ -141,8 +154,10 @@ def summarize_traffic_records(records):
     previous_comfort_time = timestamp
 
   return {
-    "data_valid": control_count >= 3 and control_gap_count == 0 and invalid_sample_count == 0,
-    "control_sample_count": control_count, "comfort_sample_count": comfort_count,
+    "data_valid": (control_count >= 3 and active_control_count / control_count >= 0.9 and
+                   control_gap_count == 0 and invalid_sample_count == 0),
+    "control_sample_count": control_count, "active_control_sample_count": active_control_count,
+    "comfort_sample_count": comfort_count,
     "control_gap_count": control_gap_count, "invalid_sample_count": invalid_sample_count,
     "duration_s": last_time - first_time if first_time is not None else None,
     "distance_m": distance_m,
@@ -160,6 +175,12 @@ def summarize_traffic_records(records):
     "comfort_excluded_duration_s": max(0.0, last_time - first_contact_s) if first_contact_s is not None and last_time is not None else 0.0,
     "minimum_actor_clearance_m": minimum_gap,
     "minimum_observed_ttc_s": minimum_ttc,
+    "p95_lateral_tracking_error_m": lateral_error.p95(),
+    "maximum_lateral_tracking_error_m": lateral_error.maximum,
+    "p95_motorcycle_speed_error_mps": motorcycle_speed_error.p95(),
+    "actor_tracking_valid": (lateral_error.p95() is not None and motorcycle_speed_error.p95() is not None and
+                             lateral_error.p95() <= 0.4 and lateral_error.maximum <= 0.8 and
+                             motorcycle_speed_error.p95() <= 1.0),
   }
 
 
@@ -171,8 +192,14 @@ def compare_traffic_runs(baseline, candidate):
               "carla_server_version", "params", "source_sha256", "onnx_sha256", "compiled_artifact_sha256"):
     if baseline.get(key) != candidate.get(key):
       failures.append(f"run setting differs: {key}")
+  for label, run in (("baseline", baseline), ("candidate", candidate)):
+    expected, actual = run.get("configured_duration_s"), run.get("duration_s")
+    if expected is not None and expected > 0 and (actual is None or abs(actual - expected) > max(0.25, expected * 0.01)):
+      failures.append(f"{label} did not complete configured duration")
   if not baseline.get("data_valid") or not candidate.get("data_valid"):
     failures.append("missing or irregular control telemetry")
+  if not baseline.get("actor_tracking_valid") or not candidate.get("actor_tracking_valid"):
+    failures.append("Phase 1 actor tracking gate failed")
   baseline_source, candidate_source = baseline.get("actual_accel_source"), candidate.get("actual_accel_source")
   if baseline_source != candidate_source or "mixed" in (baseline_source, candidate_source):
     failures.append("actual acceleration sources differ or are mixed")

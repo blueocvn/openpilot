@@ -40,6 +40,21 @@ class TestTrafficAnalysis(unittest.TestCase):
     self.assertFalse(summary["data_valid"])
     self.assertEqual(summary["control_gap_count"], 1)
 
+  def test_disengaged_run_is_not_valid_longitudinal_evidence(self):
+    summary = summarize_traffic_records(iter(control(t / 10, 2.0, 0.0, active=False) for t in range(5)))
+    self.assertFalse(summary["data_valid"])
+
+  def test_five_hz_samples_are_not_valid_ten_hz_telemetry(self):
+    summary = summarize_traffic_records(iter(control(t / 5, 2.0, 0.0) for t in range(5)))
+    self.assertFalse(summary["data_valid"])
+
+  def test_duplicate_timestamp_is_invalid_not_a_division_error(self):
+    summary = summarize_traffic_records(iter([
+      control(0.0, 1.0, 0.0), control(0.1, 1.1, 0.2), control(0.1, 1.2, 0.4),
+    ]))
+    self.assertFalse(summary["data_valid"])
+    self.assertEqual(summary["control_gap_count"], 1)
+
   def test_direct_carla_acceleration_takes_precedence_over_speed_difference(self):
     samples = [control(0.0, 1.0, 0.0), control(0.1, 1.0, 0.0), control(0.2, 1.0, 0.0)]
     for sample, acceleration in zip(samples, (0.0, 0.5, 1.0), strict=True):
@@ -57,6 +72,15 @@ class TestTrafficAnalysis(unittest.TestCase):
     self.assertEqual(summary["contact_count"], 1)
     self.assertEqual(summary["contact_event_count"], 2)
 
+  def test_tracking_gate_rejects_unstable_motorcycle_path(self):
+    records = [control(0.0, 1.0, 0.0), control(0.1, 1.0, 0.0),
+               {"type": "ground_truth", "scene_time_s": 0.15, "actors": [
+                 {"role": "cut_in", "lateral_tracking_error_m": 0.9,
+                  "speed_mps": 5.0, "target_speed_mps": 5.0}]},
+               control(0.2, 1.0, 0.0)]
+    summary = summarize_traffic_records(iter(records))
+    self.assertFalse(summary["actor_tracking_valid"])
+
   def test_manifest_duration_does_not_overwrite_measured_duration(self):
     with TemporaryDirectory() as directory:
       report = Path(directory)
@@ -71,7 +95,7 @@ class TestTrafficAnalysis(unittest.TestCase):
       self.assertEqual(summary["configured_duration_s"], 60)
 
   def test_pairwise_acceptance_rejects_contact_or_progress_regression(self):
-    baseline = {"vn_traffic_mode": "0", "seed": 42,
+    baseline = {"vn_traffic_mode": "0", "seed": 42, "actor_tracking_valid": True,
                 "p95_abs_actual_jerk_mps3": 4.0, "accel_decel_switch_count": 3,
                 "distance_m": 100.0, "contact_count": 0, "disengagement_count": 0,
                 "minimum_observed_ttc_s": 2.0, "minimum_actor_clearance_m": 5.0, "data_valid": True}
@@ -84,6 +108,9 @@ class TestTrafficAnalysis(unittest.TestCase):
                                           {**candidate, "actual_accel_source": "speed_difference"})["pass"])
     self.assertFalse(compare_traffic_runs(baseline, {**candidate, "vn_traffic_mode": "0"})["pass"])
     self.assertFalse(compare_traffic_runs(baseline, {**candidate, "seed": 43})["pass"])
+    self.assertFalse(compare_traffic_runs(baseline, {**candidate, "actor_tracking_valid": False})["pass"])
+    self.assertFalse(compare_traffic_runs({**baseline, "configured_duration_s": 60, "duration_s": 0.4},
+                                          {**candidate, "configured_duration_s": 60, "duration_s": 0.4})["pass"])
 
 
 if __name__ == "__main__":
