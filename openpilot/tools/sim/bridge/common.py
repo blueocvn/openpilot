@@ -164,6 +164,7 @@ Openpilot: engageable={selfdrive_state.engageable} alert={selfdrive_state.alertT
     while self._keep_alive:
       throttle_out = steer_out = brake_out = 0.0
       throttle_op = steer_op = brake_op = 0.0
+      bridge_longitudinal = None
 
       self.simulator_state.cruise_button = 0
       self.simulator_state.left_blinker = False
@@ -279,6 +280,8 @@ Openpilot: engageable={selfdrive_state.engageable} alert={selfdrive_state.alertT
           # that grows unbounded with speed.
           actuator_accel = (requested_accel + self.longitudinal_accel_kp * accel_error +
                             self.longitudinal_accel_integral)
+          unconstrained_actuator_accel = actuator_accel
+          overspeed_limited = False
 
           # The simulated cruise speed is a hard upper bound for positive
           # actuation. This guard is independent of the planner so a stale
@@ -287,6 +290,7 @@ Openpilot: engageable={selfdrive_state.engageable} alert={selfdrive_state.alertT
           if cruise_speed is not None and self.simulator_state.speed > cruise_speed + self.longitudinal_overspeed_margin:
             actuator_accel = min(actuator_accel, 0.0)
             self.longitudinal_accel_integral = min(self.longitudinal_accel_integral, 0.0)
+            overspeed_limited = True
 
           if actuator_accel >= 0.0:
             throttle_op = np.clip(actuator_accel / self.THROTTLE_ACCEL, 0.0, 1.0)
@@ -294,6 +298,15 @@ Openpilot: engageable={selfdrive_state.engageable} alert={selfdrive_state.alertT
           else:
             throttle_op = 0.0
             brake_op = np.clip(-actuator_accel / self.BRAKE_DECEL, 0.0, 1.0)
+          bridge_longitudinal = {
+            "requested_accel_mps2": float(requested_accel),
+            "actual_accel_mps2": float(actual_accel),
+            "proportional_term_mps2": float(self.longitudinal_accel_kp * accel_error),
+            "integral_term_mps2": float(self.longitudinal_accel_integral),
+            "unconstrained_actuator_accel_mps2": float(unconstrained_actuator_accel),
+            "actuator_accel_mps2": float(actuator_accel),
+            "overspeed_limited": overspeed_limited,
+          }
         else:
           if self.stock_cruise_emulation:
             # This simulated Tesla uses stock longitudinal control. In that mode
@@ -360,6 +373,14 @@ Openpilot: engageable={selfdrive_state.engageable} alert={selfdrive_state.alertT
         steer_out = startup_steer
 
       self.last_controls = (float(steer_out), float(throttle_out), float(brake_out))
+      if getattr(self.world, "scene", None) is not None:
+        self.world.record_bridge_control({
+          **(bridge_longitudinal or {}),
+          "controller_active": bridge_longitudinal is not None,
+          "manual_override": manual_control_active,
+          "actual_throttle": float(throttle_out),
+          "actual_brake": float(brake_out),
+        })
       if brake_out > 0.01 and hasattr(self, "brake_seen"):
         self.brake_seen.value = True
       self.world.apply_controls(steer_out, throttle_out, brake_out)

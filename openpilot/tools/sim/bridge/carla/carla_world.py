@@ -105,8 +105,12 @@ class CarlaWorld(World):
         self.carla, self.world, self.vehicle, self.actors, case=scene_case, seed=scene_seed,
         duration_s=scene_duration, report_dir=report_dir,
       )
+      self.scene.carla_server_version = self.client.get_server_version()
+      self.scene.carla_map_name = self.world.get_map().name
+      self.scene.start_manifest()
       self.scene_sm = messaging.SubMaster([
-        "carState", "carControl", "carOutput", "selfdriveState", "longitudinalPlan", "modelV2",
+        "carState", "carControl", "carOutput", "selfdriveState", "longitudinalPlan", "modelV2", "radarState",
+        "onroadEvents",
       ])
     # Axle offsets are fixed for the rigid body, so resolve them once at spawn.
     self._front_axle, self._rear_axle = self._axle_offsets()
@@ -401,6 +405,10 @@ class CarlaWorld(World):
                         long_active=self.scene_sm["carControl"].longActive,
                         ego_speed_mps=float(self.scene_sm["carState"].vEgo)):
         self.scene.set_openpilot_ready(self._simulation_time())
+
+  def record_bridge_control(self, control):
+    if self.scene is not None:
+      self.scene.latest_bridge_control = control
 
   def _simulation_time(self):
     return float(self.world.get_snapshot().timestamp.elapsed_seconds)

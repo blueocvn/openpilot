@@ -35,15 +35,18 @@ bash run.sh all --openpilot-longitudinal \
 ## Vietnam dense motorcycle weave
 
 The scene commands 30 km/h cruise and starts after openpilot longitudinal is
-active and ego reaches 7.5 m/s. It maintains 3–5 background Vespas in the two
-adjacent lanes at 5–7 m/s. One additional motorcycle at a time cuts across
-the ego lane: seeded attempts every 2–3 s, 4.5–5.5 m/s speed, 6–8 m planned
-bumper gap on entering the ego lane, and a 1.5–2 s lane hold. A new attempt
-waits while the previous crossing is active. The scene checks vehicle
-footprints at spawn and defers on occupied lanes or insufficient road; it does
-not guarantee collision avoidance after a close cut-in. Actors are retired
-after crossing or leaving the available road; none are teleported in front of
-ego. This intentionally replaces the previous lower-speed baseline.
+active and ego reaches 7.5 m/s. It maintains 3–5 Vespas in the two adjacent
+lanes at 5–7 m/s. A warmed-up motorcycle from that flow becomes the next
+cut-in only when its measured speed and position provide a suitable gap;
+another bike replenishes the side lane. Seeded attempts are due every 2–3 s,
+with a 4.5–5.5 m/s cut-in target and roughly 6–8 m measured entry gap. The
+physical lane hold is measured from the bike's actual position, not assumed
+from the schedule. A new attempt waits while the previous crossing is active.
+The scene checks vehicle footprints at spawn and defers on occupied lanes or
+insufficient road; it does not guarantee collision avoidance after a close
+cut-in. Actors are retired after crossing or leaving the available road; none
+are teleported in front of ego, and their velocity is initialized only once
+at spawn rather than forced every tick.
 
 ```bash
 bash run.sh all --openpilot-longitudinal \
@@ -65,7 +68,11 @@ inherit stale Params from a previous simulator session.
 The bridge writes timestamped `events.jsonl` segments below `.carla/reports/`,
 rotating at 10 MiB. Event records are immediate; full ground truth is sampled
 at 2 Hz and compact control/lead measurements at 10 Hz. The analyzer reports
-cut-ins with lead or real brake actuation, stop/go, clearance, and collisions:
+cut-ins with lead or real brake actuation, stop/go, clearance, and collisions.
+`manifest.json` records source/model/runtime hashes and run settings; its
+`compiled_source_link_verified` flag remains false until the compiled model
+is independently tied to the checked ONNX source. Lead–actor matching is
+offline only and reports unknown when geometry is ambiguous:
 
 ```bash
 uv run python ../analyze_motorcycle_weave.py \

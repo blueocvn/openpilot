@@ -1,10 +1,15 @@
 """Deterministic schedule and CARLA runtime for motorcycle cut-ins."""
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import hashlib
+import json
 import math
 from pathlib import Path
 import random
+import subprocess
+import sys
+import threading
 import time
 
 from openpilot.tools.sim.bridge.carla.scenes.report import RotatingReport
@@ -18,6 +23,7 @@ DEFAULT_FIRST_START_S = 6.0
 DEFAULT_INTERVAL_S = 4.0
 DEFAULT_EVENT_COUNT = 6
 SCENE_READY_SPEED_MPS = 7.5
+STAGING_GAP_MARGIN_M = 1.2
 
 
 @dataclass(frozen=True)
@@ -84,8 +90,11 @@ class ContinuousWeaveScheduler:
     speed_mps = self.rng.uniform(4.5, 5.5)
     merge_gap_m = self.rng.uniform(6.0, 8.0)
     entry_s = self.rng.uniform(1.15, 1.55)
-    hold_s = self.rng.uniform(1.5, 2.0)
-    exit_s = self.rng.uniform(1.15, 1.55)
+    # The physical Vespa reaches and leaves the lane center after the
+    # reference changes phase; this shorter programmed plateau targets a
+    # measured 1.5–2.0 s lane occupation.
+    hold_s = self.rng.uniform(0.75, 1.05)
+    exit_s = self.rng.uniform(1.3, 1.6)
     start_distance = merge_gap_m + vehicle_length_buffer_m + (ego_speed_mps - speed_mps) * entry_s
     event = ContinuousPass(self.directions[self.event_index % len(self.directions)], now_s, interval_s,
                            speed_mps, merge_gap_m, entry_s, hold_s, exit_s, start_distance)
@@ -123,7 +132,7 @@ class BackgroundTrafficScheduler:
   def next_slot(self):
     state = self.rng.getstate()
     slot = BackgroundSlot("left" if self.index % 2 == 0 else "right",
-                          32.0 + 10.0 * (self.index % 4) + self.rng.uniform(0.0, 3.0),
+                          25.0 + 5.0 * (self.index % 4) + self.rng.uniform(0.0, 3.0),
                           self.rng.uniform(5.0, 7.0))
     self.rng.setstate(state)
     return slot
@@ -162,6 +171,27 @@ def finite_or_none(value):
   return value if math.isfinite(value) else None
 
 
+def sha256_path(path):
+  with Path(path).open("rb") as source:
+    return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def param_value_text(value):
+  return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value)
+
+
+def radar_lead_snapshot(lead):
+  return {
+    "present": bool(lead.present),
+    "distance_m": finite_or_none(lead.dRel),
+    "lateral_m": finite_or_none(lead.yRel),
+    "relative_speed_mps": finite_or_none(lead.vRel),
+    "lead_speed_mps": finite_or_none(lead.vLead),
+    "model_probability": finite_or_none(lead.modelProb),
+    "radar_matched": bool(lead.radar),
+  }
+
+
 def find_middle_driving_lane(start, driving_lane_type):
   """Find the nearest same-direction lane with driving lanes on both sides."""
   queue = [start]
@@ -195,6 +225,21 @@ def scenario_ready(*, active, long_active, ego_speed_mps):
 
 def trajectory_distance(initial_distance_m, speed_mps, elapsed_s, *, lookahead_m):
   return initial_distance_m + speed_mps * elapsed_s + lookahead_m
+
+
+def advance_path_distance(distance_m, *, velocity_x, velocity_y, route_yaw_deg, dt_s):
+  """Advance the reference by measured forward travel, never by scene clock."""
+  yaw = math.radians(route_yaw_deg)
+  forward_speed = math.cos(yaw) * velocity_x + math.sin(yaw) * velocity_y
+  return distance_m + max(forward_speed, 0.0) * max(dt_s, 0.0)
+
+
+def background_cut_in_ready(event, *, distance_m, ego_speed_mps, bike_speed_mps, vehicle_length_buffer_m):
+  if abs(bike_speed_mps - event.speed_mps) > 1.0:
+    return False
+  required_distance = (event.merge_gap_m + STAGING_GAP_MARGIN_M + vehicle_length_buffer_m +
+                       (ego_speed_mps - bike_speed_mps) * event.entry_s)
+  return abs(distance_m - required_distance) <= 0.5
 
 
 def ego_relative_longitudinal(ego_x: float, ego_y: float, actor_x: float, actor_y: float,
@@ -349,7 +394,7 @@ class MotorcycleWeaveScene:
   """
 
   LOOKAHEAD_M = 3.0
-  PROGRESS_LOOKAHEAD_M = 6.0
+  EXIT_LATERAL_LOOKAHEAD_M = 1.2
 
   def __init__(self, carla, world, ego_vehicle, actor_sink, *, case="alternating", seed=42,
                duration_s=45.0, report_dir=None):
@@ -373,9 +418,15 @@ class MotorcycleWeaveScene:
     self._last_sample_time_s = None
     self._last_control_sample_s = None
     self.latest_openpilot = {"available": False}
+    self.latest_bridge_control = {"controller_active": False}
     root = Path(report_dir) if report_dir else Path(".carla/reports")
     self.report_dir = root / f"motorcycle-weave-{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1_000_000_000:09d}"
     self.report_file = None
+    self._manifest_thread = None
+
+  def start_manifest(self):
+    self._manifest_thread = threading.Thread(target=self._write_manifest, name="carla-scene-manifest")
+    self._manifest_thread.start()
 
   def set_openpilot_ready(self, simulation_time_s):
     if self.ready_time_s is None:
@@ -399,14 +450,17 @@ class MotorcycleWeaveScene:
         continue
       event = item["event"]
       pass_elapsed_s = elapsed_s - event.start_time_s
-      control_progress = pass_lateral_progress(event, pass_elapsed_s + self.PROGRESS_LOOKAHEAD_M / event.speed_mps)
+      self._advance_actor_progress(item, simulation_time_s)
+      self._track_lane_occupancy(item, elapsed_s)
+      control_progress = self._control_progress(item)
       try:
         target = self._target_location(item, pass_elapsed_s, control_progress, lookahead_m=self.LOOKAHEAD_M)
       except RuntimeError:
         item["actor"].apply_control(self.carla.VehicleControl(throttle=0.0, brake=1.0))
         continue
       self._apply_control(item, target)
-      if pass_elapsed_s >= event.total_s and not item["completed"]:
+      if (item["progress_m"] >= event.speed_mps * event.total_s and
+          item["left_ego_lane_at"] is not None and not item["completed"]):
         item["completed"] = True
         self._write({"type": "cut_in_finished", "scene_time_s": elapsed_s,
                      "actor_id": item["actor"].id, "direction": event.direction})
@@ -436,14 +490,39 @@ class MotorcycleWeaveScene:
     if elapsed_s < self.scheduler.next_due_s:
       return
     direction = self.scheduler.directions[self.scheduler.event_index % len(self.scheduler.directions)]
-    old_actor = self._reusable_actor(direction)
     if any(not item["completed"] for item in self._actors):
       return
+    side = "right" if direction == "right_to_left" else "left"
+    candidates = [item for item in self._background if item["side"] == side and item["actor"].is_alive]
+    if not candidates:
+      return
     event = self.scheduler.propose(elapsed_s, ego_speed_mps=self._ego_speed(), available_road_m=available_road_m,
-                                   actor_available=old_actor is not False,
-                                   vehicle_length_buffer_m=self._vehicle_length_buffer(old_actor))
-    if event is not None and self._start_pass(event, ego_lane, left_lane, right_lane, old_actor):
-      self.scheduler.commit(event)
+                                   actor_available=True, vehicle_length_buffer_m=self._vehicle_length_buffer(candidates[0]))
+    if event is None:
+      return
+    ego_transform = self.ego_vehicle.get_transform()
+    candidates.sort(key=lambda item: ego_relative_longitudinal(
+      ego_transform.location.x, ego_transform.location.y,
+      item["actor"].get_location().x, item["actor"].get_location().y,
+      ego_transform.rotation.yaw))
+    for item in candidates:
+      actor = item["actor"]
+      actor_position = actor.get_location()
+      center_distance = ego_relative_longitudinal(
+        ego_transform.location.x, ego_transform.location.y,
+        actor_position.x, actor_position.y, ego_transform.rotation.yaw)
+      buffer_m = self._vehicle_length_buffer(item)
+      if center_distance < event.merge_gap_m + buffer_m:
+        continue
+      item["speed_mps"] = event.speed_mps
+      item["staged_for_cut_in"] = True
+      velocity = actor.get_velocity()
+      actor_speed = math.sqrt(velocity.x ** 2 + velocity.y ** 2 + velocity.z ** 2)
+      if background_cut_in_ready(event, distance_m=center_distance, ego_speed_mps=self._ego_speed(),
+                                 bike_speed_mps=actor_speed, vehicle_length_buffer_m=buffer_m):
+        if self._start_pass(event, ego_lane, left_lane, right_lane, item):
+          self.scheduler.commit(event)
+        return
 
   def _update_background(self, elapsed_s):
     if not self._background:
@@ -463,8 +542,11 @@ class MotorcycleWeaveScene:
         self._retire_background(item, elapsed_s)
         continue
       try:
-        target = self._advance(item["source"], item["distance_m"] +
-                               item["speed_mps"] * (elapsed_s - item["start_s"]) + self.LOOKAHEAD_M).transform.location
+        current_lane = self.world.get_map().get_waypoint(
+          transform.location, project_to_road=True, lane_type=self.carla.LaneType.Driving)
+        if current_lane is None:
+          raise RuntimeError("background motorcycle left the driving lane")
+        target = self._advance(current_lane, self.LOOKAHEAD_M).transform.location
       except RuntimeError:
         self._retire_background(item, elapsed_s)
         continue
@@ -498,7 +580,8 @@ class MotorcycleWeaveScene:
                                                   y=forward.y * slot.speed_mps, z=0.0))
     self.actor_sink.append(actor)
     self._background.append({"actor": actor, "source": lane, "distance_m": slot.distance_m,
-                             "start_s": elapsed_s, "speed_mps": slot.speed_mps, "speed_integral": 0.0})
+                             "start_s": elapsed_s, "side": slot.side, "speed_mps": slot.speed_mps,
+                             "speed_integral": 0.0})
     self.background_scheduler.commit()
     self._write({"type": "background_started", "scene_time_s": elapsed_s, "actor_id": actor.id,
                  "side": slot.side, "speed_mps": slot.speed_mps})
@@ -525,6 +608,7 @@ class MotorcycleWeaveScene:
         "ego_speed_mps": math.sqrt(ego_velocity.x ** 2 + ego_velocity.y ** 2 + ego_velocity.z ** 2),
         "ego_brake": float(self.ego_vehicle.get_control().brake),
         "openpilot": self.latest_openpilot,
+        "bridge_control": self.latest_bridge_control,
       })
     if self._last_sample_time_s is not None and elapsed_s - self._last_sample_time_s < 0.5 - 1e-6:
       return
@@ -543,7 +627,7 @@ class MotorcycleWeaveScene:
       pass_elapsed_s = elapsed_s - event.start_time_s
       try:
         target, reference_yaw = self._target_pose(
-          item, pass_elapsed_s, pass_lateral_progress(event, pass_elapsed_s), lookahead_m=0.0,
+          item, pass_elapsed_s, pass_lateral_progress(event, item["progress_m"] / event.speed_mps), lookahead_m=0.0,
         )
       except RuntimeError:
         continue
@@ -556,18 +640,34 @@ class MotorcycleWeaveScene:
       )
       ego_footprint = [(vertex.x, vertex.y) for vertex in self.ego_vehicle.bounding_box.get_world_vertices(ego_transform)]
       actor_footprint = [(vertex.x, vertex.y) for vertex in actor.bounding_box.get_world_vertices(transform)]
+      relative_x = ego_relative_longitudinal(
+        ego_transform.location.x, ego_transform.location.y,
+        transform.location.x, transform.location.y, ego_transform.rotation.yaw)
+      _, relative_y = tracking_error_components(
+        actual_x=transform.location.x, actual_y=transform.location.y,
+        reference_x=ego_transform.location.x, reference_y=ego_transform.location.y,
+        reference_yaw_deg=ego_transform.rotation.yaw)
       actors.append({
         "id": actor.id,
         "role": "cut_in",
         "direction": item["event"].direction,
-        "phase": pass_lateral_progress(event, pass_elapsed_s),
+        "phase": pass_lateral_progress(event, item["progress_m"] / event.speed_mps),
+        "actual_path_distance_m": item["progress_m"],
+        "in_ego_lane": item["entered_ego_lane_at"] is not None and item["left_ego_lane_at"] is None,
+        "actual_hold_s": (elapsed_s - item["entered_ego_lane_at"]
+                          if item["entered_ego_lane_at"] is not None and item["left_ego_lane_at"] is None else
+                          item["left_ego_lane_at"] - item["entered_ego_lane_at"]
+                          if item["left_ego_lane_at"] is not None else None),
         "target_speed_mps": event.speed_mps,
         "position_m": [transform.location.x, transform.location.y, transform.location.z],
         "speed_mps": math.sqrt(velocity.x ** 2 + velocity.y ** 2 + velocity.z ** 2),
         "tracking_error_m": math.hypot(transform.location.x - target.x, transform.location.y - target.y),
         "longitudinal_tracking_error_m": longitudinal_error,
         "lateral_tracking_error_m": lateral_error,
+        "motorcycle_steer": item.get("last_steer"),
         "distance_to_ego_m": polygon_clearance(ego_footprint, actor_footprint),
+        "ego_forward_gap_m": relative_x - self.ego_vehicle.bounding_box.extent.x - actor.bounding_box.extent.x,
+        "ego_lateral_offset_m": relative_y,
       })
     for item in self._background:
       actor = item["actor"]
@@ -576,7 +676,7 @@ class MotorcycleWeaveScene:
       transform = actor.get_transform()
       velocity = actor.get_velocity()
       actors.append({
-        "id": actor.id, "role": "background",
+        "id": actor.id, "role": "staged_cut_in" if item.get("staged_for_cut_in") else "background",
         "position_m": [transform.location.x, transform.location.y, transform.location.z],
         "speed_mps": math.sqrt(velocity.x ** 2 + velocity.y ** 2 + velocity.z ** 2),
         "target_speed_mps": item["speed_mps"],
@@ -590,6 +690,7 @@ class MotorcycleWeaveScene:
       "actors": actors,
       "collisions": list(self._collisions),
       "openpilot": self.latest_openpilot,
+      "bridge_control": self.latest_bridge_control,
     })
 
   def record_openpilot(self, sm):
@@ -601,10 +702,28 @@ class MotorcycleWeaveScene:
       plan = sm["longitudinalPlan"]
       model = sm["modelV2"]
       lead = model.leadsV3[0] if len(model.leadsV3) else None
+      try:
+        radar = sm["radarState"]
+      except (KeyError, TypeError):
+        radar = None
+      try:
+        onroad_events = [str(event.name) for event in sm["onroadEvents"]]
+      except (KeyError, TypeError):
+        onroad_events = []
+      services = ("carState", "carControl", "carOutput", "selfdriveState", "longitudinalPlan", "modelV2", "radarState", "onroadEvents")
+      valid = getattr(sm, "valid", {})
+      alive = getattr(sm, "alive", {})
+      mono_time = getattr(sm, "logMonoTime", {})
       self.latest_openpilot = {
         "available": True,
         "active": bool(selfdrive_state.active),
         "long_active": bool(car_control.longActive),
+        "selfdrive_state": str(getattr(selfdrive_state, "state", "unknown")),
+        "alert_type": str(getattr(selfdrive_state, "alertType", "")),
+        "onroad_events": onroad_events,
+        "cruise_enabled": bool(getattr(getattr(car_state, "cruiseState", None), "enabled", False)),
+        "steer_fault_temporary": bool(getattr(car_state, "steerFaultTemporary", False)),
+        "steer_fault_permanent": bool(getattr(car_state, "steerFaultPermanent", False)),
         "v_ego_mps": finite_or_none(car_state.vEgo),
         "a_ego_mps2": finite_or_none(car_state.aEgo),
         "requested_accel_mps2": finite_or_none(car_control.actuators.accel),
@@ -615,6 +734,15 @@ class MotorcycleWeaveScene:
         "plan_has_lead": bool(plan.hasLead),
         "lead_probability": finite_or_none(lead.prob) if lead is not None else None,
         "lead_distance_m": finite_or_none(lead.x[0]) if lead is not None and len(lead.x) else None,
+        "model_leads": [{"probability": finite_or_none(candidate.prob),
+                         "distance_m": finite_or_none(candidate.x[0]) if len(candidate.x) else None,
+                         "lateral_m": finite_or_none(candidate.y[0]) if len(candidate.y) else None,
+                         "speed_mps": finite_or_none(candidate.v[0]) if len(candidate.v) else None}
+                        for candidate in model.leadsV3],
+        "radar_lead_one": radar_lead_snapshot(radar.leadOne) if radar is not None else None,
+        "radar_lead_two": radar_lead_snapshot(radar.leadTwo) if radar is not None else None,
+        "message_status": {service: {"valid": valid.get(service), "alive": alive.get(service),
+                                     "mono_time_ns": mono_time.get(service)} for service in services},
       }
     except (AttributeError, IndexError, KeyError, RuntimeError, TypeError, ValueError):
       self.latest_openpilot = {"available": False}
@@ -626,6 +754,8 @@ class MotorcycleWeaveScene:
     self._write({"type": "scenario_closed", "scene_time_s": elapsed_s})
     self.report_file.close()
     self.report_file = None
+    if self._manifest_thread is not None:
+      self._manifest_thread.join()
 
   def _prepare(self):
     self.report_file = RotatingReport(self.report_dir)
@@ -640,6 +770,42 @@ class MotorcycleWeaveScene:
     sensor = self.world.spawn_actor(collision_bp, self.carla.Transform(), attach_to=self.ego_vehicle)
     sensor.listen(self._on_collision)
     self.actor_sink.append(sensor)
+
+  def _write_manifest(self):
+    self.report_dir.mkdir(parents=True, exist_ok=True)
+    root = Path(__file__).resolve().parents[6]
+    model_dir = root / "openpilot/selfdrive/modeld/models"
+    artifact_names = ("driving_supercombo.onnx", "big_driving_supercombo.onnx")
+    compiled = sorted((*model_dir.glob("driving_tinygrad.pkl*"),
+                       *model_dir.glob("big_driving_tinygrad.pkl*")))
+    source_paths = ("openpilot/tools/sim/bridge/carla/scenes/motorcycle_weave.py",
+                    "openpilot/tools/sim/bridge/common.py",
+                    "openpilot/tools/sim/bridge/carla/carla_world.py",
+                    "openpilot/selfdrive/controls/lib/longitudinal_planner.py")
+    revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,
+                              text=True, check=False, timeout=5)
+    try:
+      from openpilot.common.params import Params
+      params = Params()
+      captured_params = {key: param_value_text(value)
+                         for key in ("ExperimentalMode", "LongitudinalPersonality")
+                         if (value := params.get(key)) is not None}
+    except (ImportError, OSError, RuntimeError):
+      captured_params = {}
+    manifest = {
+      "schema_version": 1,
+      "git_commit": revision.stdout.strip() if revision.returncode == 0 else None,
+      "scene": "motorcycle_weave", "case": self.case, "seed": self.seed,
+      "duration_s": self.duration_s, "command_argv": sys.argv,
+      "carla_map": getattr(self, "carla_map_name", None),
+      "carla_server_version": getattr(self, "carla_server_version", None),
+      "params": captured_params,
+      "source_sha256": {name: sha256_path(root / name) for name in source_paths},
+      "onnx_sha256": {name: sha256_path(model_dir / name) for name in artifact_names},
+      "compiled_artifact_sha256": {path.name: sha256_path(path) for path in compiled},
+      "compiled_source_link_verified": False,
+    }
+    (self.report_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
   def _ego_speed(self):
     velocity = self.ego_vehicle.get_velocity()
@@ -661,19 +827,6 @@ class MotorcycleWeaveScene:
       return None
     return ego_lane, left_lane, right_lane, 80.0
 
-  def _reusable_actor(self, direction):
-    candidates = [item for item in self._actors if item["event"].direction == direction]
-    if not candidates:
-      return None
-    item = candidates[0]
-    if not item["completed"] or not item["actor"].is_alive:
-      return False
-    ego = self.ego_vehicle.get_transform()
-    actor = item["actor"].get_transform()
-    distance = ego_relative_longitudinal(
-      ego.location.x, ego.location.y, actor.location.x, actor.location.y, ego.rotation.yaw)
-    return item if distance < -20.0 else False
-
   def _retire_actor(self, item, elapsed_s):
     actor = item["actor"]
     actor.destroy()
@@ -685,38 +838,32 @@ class MotorcycleWeaveScene:
     motorcycle_half_length = old_actor["actor"].bounding_box.extent.x if old_actor not in (None, False) else 1.1
     return self.ego_vehicle.bounding_box.extent.x + motorcycle_half_length
 
-  def _start_pass(self, event, ego_lane, left_lane, right_lane, old_actor):
-    source, target = (right_lane, left_lane) if event.direction == "right_to_left" else (left_lane, right_lane)
+  def _start_pass(self, event, ego_lane, left_lane, right_lane, staged_item):
+    expected_source = right_lane if event.direction == "right_to_left" else left_lane
+    actor = staged_item["actor"]
+    source = self.world.get_map().get_waypoint(
+      actor.get_location(), project_to_road=True, lane_type=self.carla.LaneType.Driving)
+    if source is None or not same_lane_path(source, expected_source):
+      return False
+    middle = self._driving_neighbor(source, "left" if event.direction == "right_to_left" else "right")
+    target = self._driving_neighbor(middle, "left" if event.direction == "right_to_left" else "right") if middle is not None else None
+    if middle is None or target is None:
+      return False
     try:
-      transform = self._advance(source, event.spawn_center_distance_m).transform
+      self._advance(source, event.speed_mps * event.total_s + 20.0)
     except RuntimeError:
       return False
-    transform.location.z += 0.15
-    if not self._spawn_clear(transform):
-      return False
-    if old_actor is None:
-      blueprint = self.world.get_blueprint_library().find("vehicle.vespa.zx125")
-      actor = self.world.try_spawn_actor(blueprint, transform)
-      if actor is None:
-        return False
-      self.actor_sink.append(actor)
-      item = {"actor": actor}
-      self._actors.append(item)
-    else:
-      item = old_actor
-      actor = item["actor"]
-      # Reuse only after this actor is well behind ego; never teleport an actor
-      # still visible in front of the road camera.
-      actor.set_transform(transform)
-    forward = transform.get_forward_vector()
-    actor.set_target_velocity(self.carla.Vector3D(
-      x=forward.x * event.speed_mps, y=forward.y * event.speed_mps, z=0.0))
-    item.update(event=event, source=source, middle=ego_lane, target=target,
-                speed_integral=0.0, completed=False)
+    self._background.remove(staged_item)
+    self._actors.append(staged_item)
+    actual_event = replace(event, spawn_center_distance_m=0.0)
+    staged_item.update(event=actual_event, source=source, middle=middle, target=target,
+                speed_integral=0.0, completed=False, progress_m=0.0,
+                last_progress_time_s=None, entered_ego_lane_at=None, left_ego_lane_at=None)
     self._write({"type": "cut_in_started", "scene_time_s": event.start_time_s,
                  "actor_id": actor.id, "direction": event.direction,
                  "speed_mps": event.speed_mps, "merge_gap_m": event.merge_gap_m,
-                 "entry_s": event.entry_s, "hold_s": event.hold_s, "exit_s": event.exit_s})
+                 "entry_s": event.entry_s, "hold_s": event.hold_s, "exit_s": event.exit_s,
+                 "from_staged_background": True})
     return True
 
   def _driving_neighbor(self, waypoint, side):
@@ -743,10 +890,18 @@ class MotorcycleWeaveScene:
   def _target_location(self, item, elapsed_s, progress, *, lookahead_m):
     return self._target_pose(item, elapsed_s, progress, lookahead_m=lookahead_m)[0]
 
+  def _control_progress(self, item):
+    event = item["event"]
+    distance = item["progress_m"]
+    # The bike needs more preview on entry than exit. A full 3 m of exit
+    # preview pulls it out of the ego lane before the reference path does.
+    lateral_lookahead = (self.LOOKAHEAD_M if distance < event.speed_mps * event.entry_s else
+                         self.EXIT_LATERAL_LOOKAHEAD_M)
+    return pass_lateral_progress(event, (distance + lateral_lookahead) / event.speed_mps)
+
   def _target_pose(self, item, elapsed_s, progress, *, lookahead_m):
     event = item["event"]
-    distance = trajectory_distance(event.spawn_center_distance_m, event.speed_mps,
-                                   elapsed_s, lookahead_m=lookahead_m)
+    distance = event.spawn_center_distance_m + item["progress_m"] + lookahead_m
     source_transform = self._advance(item["source"], distance).transform
     middle_transform = self._advance(item["middle"], distance).transform
     target_transform = self._advance(item["target"], distance).transform
@@ -761,6 +916,52 @@ class MotorcycleWeaveScene:
     )
     return location, source_transform.rotation.yaw
 
+  def _advance_actor_progress(self, item, simulation_time_s):
+    previous_time = item["last_progress_time_s"]
+    item["last_progress_time_s"] = simulation_time_s
+    if previous_time is None:
+      return
+    event = item["event"]
+    try:
+      reference = self._advance(item["source"], event.spawn_center_distance_m + item["progress_m"])
+    except RuntimeError:
+      return
+    velocity = item["actor"].get_velocity()
+    item["progress_m"] = advance_path_distance(
+      item["progress_m"], velocity_x=velocity.x, velocity_y=velocity.y,
+      route_yaw_deg=reference.transform.rotation.yaw, dt_s=simulation_time_s - previous_time)
+
+  def _track_lane_occupancy(self, item, elapsed_s):
+    event = item["event"]
+    try:
+      middle = self._advance(item["middle"], event.spawn_center_distance_m + item["progress_m"])
+    except RuntimeError:
+      return
+    position = item["actor"].get_location()
+    _, lateral_offset = tracking_error_components(
+      actual_x=position.x, actual_y=position.y,
+      reference_x=middle.transform.location.x, reference_y=middle.transform.location.y,
+      reference_yaw_deg=middle.transform.rotation.yaw)
+    if abs(lateral_offset) <= 0.6 and item["entered_ego_lane_at"] is None:
+      item["entered_ego_lane_at"] = elapsed_s
+      gap_m = None
+      if hasattr(item["actor"], "bounding_box") and hasattr(self.ego_vehicle, "bounding_box"):
+        actor_transform = item["actor"].get_transform()
+        ego_transform = self.ego_vehicle.get_transform()
+        actor_polygon = [(vertex.x, vertex.y) for vertex in
+                         item["actor"].bounding_box.get_world_vertices(actor_transform)]
+        ego_polygon = [(vertex.x, vertex.y) for vertex in
+                       self.ego_vehicle.bounding_box.get_world_vertices(ego_transform)]
+        gap_m = polygon_clearance(actor_polygon, ego_polygon)
+      self._write({"type": "cut_in_entered_ego_lane", "scene_time_s": elapsed_s,
+                   "actor_id": item["actor"].id, "actual_path_distance_m": item["progress_m"],
+                   "actual_gap_m": gap_m})
+    elif abs(lateral_offset) > 0.6 and item["entered_ego_lane_at"] is not None and item["left_ego_lane_at"] is None:
+      item["left_ego_lane_at"] = elapsed_s
+      self._write({"type": "cut_in_left_ego_lane", "scene_time_s": elapsed_s,
+                   "actor_id": item["actor"].id,
+                   "actual_hold_s": elapsed_s - item["entered_ego_lane_at"]})
+
   def _apply_control(self, item, target):
     actor = item["actor"]
     transform = actor.get_transform()
@@ -770,6 +971,7 @@ class MotorcycleWeaveScene:
     local_x = math.cos(yaw) * dx + math.sin(yaw) * dy
     local_y = -math.sin(yaw) * dx + math.cos(yaw) * dy
     steer = motorcycle_steer_command(local_x=local_x, local_y=local_y)
+    item["last_steer"] = steer
     velocity = actor.get_velocity()
     speed = math.sqrt(velocity.x ** 2 + velocity.y ** 2 + velocity.z ** 2)
     target_speed = item["speed_mps"] if "speed_mps" in item else item["event"].speed_mps
@@ -780,20 +982,24 @@ class MotorcycleWeaveScene:
       steer=steer,
       brake=brake,
     ))
-    # The CARLA Vespa needs several seconds of full throttle to reach 5 m/s;
-    # during that ramp it falls metres behind the planned cut-in position.
-    # Keep the adversarial traffic at its seeded speed while preserving
-    # CARLA steering and collision physics.
-    forward = transform.get_forward_vector()
-    actor.set_target_velocity(self.carla.Vector3D(
-      x=forward.x * target_speed,
-      y=forward.y * target_speed,
-      z=0.0,
-    ))
 
   def _on_collision(self, event):
     other = event.other_actor
-    self._collisions.append({"other_actor_id": other.id, "other_actor_type": other.type_id})
+    impulse = getattr(event, "normal_impulse", None)
+    impulse_norm = (math.sqrt(impulse.x ** 2 + impulse.y ** 2 + impulse.z ** 2)
+                    if impulse is not None else None)
+    timestamp = getattr(event, "timestamp", None)
+    record = {
+      "type": "collision",
+      "scene_time_s": timestamp - self.start_time_s if timestamp is not None and self.start_time_s is not None else None,
+      "carla_timestamp_s": timestamp,
+      "frame": getattr(event, "frame", None),
+      "other_actor_id": other.id,
+      "other_actor_type": other.type_id,
+      "impulse_norm": impulse_norm,
+    }
+    self._collisions.append(record)
+    self._write(record)
 
   def _write(self, record):
     if self.report_file is not None:

@@ -64,6 +64,18 @@ def _stop_go_counts(samples):
   return stop_count, restart_count
 
 
+def match_radar_lead_actor(lead, actors):
+  """Match observed lead geometry to one actor, or return unknown if ambiguous."""
+  if not lead or not lead.get("present") or lead.get("distance_m") is None:
+    return None
+  candidates = [actor for actor in actors
+                if actor.get("ego_forward_gap_m") is not None and actor.get("ego_lateral_offset_m") is not None
+                and abs(actor["ego_forward_gap_m"] - lead["distance_m"]) <= 2.0
+                and (lead.get("lateral_m") is None or
+                     abs(abs(actor["ego_lateral_offset_m"]) - abs(lead["lateral_m"])) <= 1.5)]
+  return candidates[0].get("id") if len(candidates) == 1 else None
+
+
 class _BoundedValues:
   """Retain a deterministic, bounded sample for long-run p95 estimates."""
 
@@ -106,6 +118,7 @@ class _Evaluation:
     self.lateral = _BoundedValues()
     self.speed_error = _BoundedValues()
     self.collisions = set()
+    self.tracking_samples_after_contact_excluded = 0
 
   def add_control(self, sample):
     accel = sample.get("openpilot", {}).get("requested_accel_mps2")
@@ -116,7 +129,7 @@ class _Evaluation:
     if accel is not None:
       self.minimum_requested_accel = accel if self.minimum_requested_accel is None else min(self.minimum_requested_accel, accel)
 
-  def add(self, sample, *, high_rate_controls=False):
+  def add(self, sample, *, high_rate_controls=False, include_tracking=True):
     timestamp, speed = sample["scene_time_s"], sample["ego_speed_mps"]
     self.minimum_ego_speed = speed if self.minimum_ego_speed is None else min(self.minimum_ego_speed, speed)
     if not self.stopped:
@@ -147,6 +160,9 @@ class _Evaluation:
       clearance = actor.get("distance_to_ego_m")
       if clearance is not None:
         self.minimum_clearance = clearance if self.minimum_clearance is None else min(self.minimum_clearance, clearance)
+      if not include_tracking:
+        self.tracking_samples_after_contact_excluded += 1
+        continue
       self.tracking.add(actor.get("tracking_error_m"))
       longitudinal_error = actor.get("longitudinal_tracking_error_m")
       lateral_error = actor.get("lateral_tracking_error_m")
@@ -170,20 +186,33 @@ def summarize_records(records):
   cut_ins_with_lead = 0
   cut_ins_with_brake = 0
   cut_ins_with_collision = 0
+  cut_ins_with_matched_lead = 0
+  collision_event_count = 0
+  first_collision_s = None
   evaluation = _Evaluation()
   for record in records:
     if record.get("type") == "cut_in_started":
       if first_cut_in_time is None:
         first_cut_in_time = record["scene_time_s"]
         evaluation = _Evaluation()
-      active_event = {"actor_id": record.get("actor_id"), "lead": False, "brake": False, "collision": False}
+      active_event = {"actor_id": record.get("actor_id"), "lead": False, "matched_lead": False,
+                      "brake": False, "collision": False}
     elif record.get("type") == "cut_in_finished":
       completed_cut_ins += 1
       if active_event is not None and record.get("actor_id") == active_event["actor_id"]:
         cut_ins_with_lead += active_event["lead"]
+        cut_ins_with_matched_lead += active_event["matched_lead"]
         cut_ins_with_brake += active_event["brake"]
         cut_ins_with_collision += active_event["collision"]
         active_event = None
+    elif record.get("type") == "collision":
+      collision_event_count += 1
+      if first_collision_s is None:
+        first_collision_s = record.get("scene_time_s")
+      if first_cut_in_time is not None:
+        evaluation.collisions.add((record.get("other_actor_id"), record.get("other_actor_type")))
+      if active_event is not None and record.get("other_actor_id") == active_event["actor_id"]:
+        active_event["collision"] = True
     elif record.get("type") == "control_sample":
       high_rate_controls = True
       control_sample_count += 1
@@ -198,8 +227,12 @@ def summarize_records(records):
       first_sample_time = timestamp if first_sample_time is None else first_sample_time
       last_sample_time = timestamp
       if first_cut_in_time is None or timestamp >= first_cut_in_time:
-        evaluation.add(record, high_rate_controls=high_rate_controls)
+        evaluation.add(record, high_rate_controls=high_rate_controls,
+                       include_tracking=first_collision_s is None or timestamp < first_collision_s)
         if active_event is not None:
+          matched_actor_id = match_radar_lead_actor(
+            record.get("openpilot", {}).get("radar_lead_one"), record.get("actors", []))
+          active_event["matched_lead"] |= matched_actor_id == active_event["actor_id"]
           if not high_rate_controls:
             active_event["lead"] |= bool(record.get("openpilot", {}).get("plan_has_lead", False))
             active_event["brake"] |= record.get("ego_brake", 0.0) > 0.05
@@ -232,11 +265,15 @@ def summarize_records(records):
     "actor_tracking_valid": (p95_lateral_error is not None and maximum_lateral_error is not None and
                              p95_speed_error is not None and p95_lateral_error <= 0.4 and
                              maximum_lateral_error <= 0.8 and p95_speed_error <= 1.0),
+    "tracking_samples_after_contact_excluded": evaluation.tracking_samples_after_contact_excluded,
     "completed_cut_in_count": completed_cut_ins,
     "cut_ins_with_lead_count": cut_ins_with_lead,
+    "cut_ins_with_matched_lead_count": cut_ins_with_matched_lead,
     "cut_ins_with_brake_count": cut_ins_with_brake,
     "cut_ins_with_collision_count": cut_ins_with_collision,
     "collision_count": len(evaluation.collisions),
+    "collision_event_count": collision_event_count,
+    "first_collision_s": first_collision_s,
   }
 
 

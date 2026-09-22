@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from threading import Lock
 
 
 class RotatingReport:
@@ -12,6 +13,7 @@ class RotatingReport:
     self.directory.mkdir(parents=True, exist_ok=True)
     self.max_bytes = max_bytes
     self.index = 1
+    self._lock = Lock()
     self.file = self._open_file()
 
   def _path(self) -> Path:
@@ -22,15 +24,17 @@ class RotatingReport:
 
   def write(self, record: dict):
     line = json.dumps(record, allow_nan=False) + "\n"
-    if self.file.tell() and self.file.tell() + len(line.encode("utf-8")) > self.max_bytes:
-      self.file.close()
-      self.index += 1
-      self.file = self._open_file()
-    self.file.write(line)
-    self.file.flush()
+    with self._lock:
+      if self.file.tell() and self.file.tell() + len(line.encode("utf-8")) > self.max_bytes:
+        self.file.close()
+        self.index += 1
+        self.file = self._open_file()
+      self.file.write(line)
+      self.file.flush()
 
   def close(self):
-    self.file.close()
+    with self._lock:
+      self.file.close()
 
   def __enter__(self):
     return self
