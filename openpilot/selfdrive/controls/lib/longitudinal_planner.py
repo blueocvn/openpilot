@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import math
+import os
 import numpy as np
 
 import openpilot.cereal.messaging as messaging
@@ -12,6 +13,7 @@ from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc, LongitudinalPlanSource
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_accel_from_plan, should_stop
+from openpilot.selfdrive.controls.lib.vn_traffic_policy import PositiveAccelRamp, TrafficModeConfig
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.common.swaglog import cloudlog
 
@@ -56,6 +58,9 @@ def get_cruise_accel(e2e, v_cruise, v_ego, a_cruise_prev, angle_steers, CP, dt, 
 class LongitudinalPlanner:
   def __init__(self, CP, init_v=0.0, init_a=0.0, dt=DT_MDL):
     self.CP = CP
+    self.traffic_mode = TrafficModeConfig.from_environment(os.environ)
+    self.traffic_simulation = os.environ.get("SIMULATION") == "1"
+    self.traffic_ramp = PositiveAccelRamp(self.traffic_mode.profile, dt)
     self.mpc = LongitudinalMpc(dt=dt)
     self.fcw = False
     self.dt = dt
@@ -143,6 +148,17 @@ class LongitudinalPlanner:
     output_a_target, self.mpc.source, _ = min(candidates, key=lambda c: c[0])
     self.output_should_stop = any(should_stop for _, _, should_stop in candidates)
     self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
+
+    traffic_active = self.traffic_mode.enabled_for(
+      simulation=self.traffic_simulation,
+      longitudinal_active=self.CP.openpilotLongitudinalControl and not reset_state and not self.output_should_stop,
+      experimental=sm['selfdriveState'].experimentalMode,
+    )
+    input_valid = sm.all_checks() if hasattr(sm, "all_checks") else True
+    self.output_a_target = self.traffic_ramp.apply(
+      self.output_a_target, speed_mps=v_ego, active=traffic_active,
+      standstill=sm['carState'].standstill, input_valid=input_valid,
+    )
 
     self.v_desired_filter.x = self.v_desired_filter.x + self.dt * (self.output_a_target + a_prev) / 2.0
 

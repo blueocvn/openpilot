@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import random
 import subprocess
@@ -603,9 +604,17 @@ class MotorcycleWeaveScene:
     if self._last_control_sample_s is None or elapsed_s - self._last_control_sample_s >= 0.1 - 1e-6:
       self._last_control_sample_s = elapsed_s
       ego_velocity = self.ego_vehicle.get_velocity()
+      get_acceleration = getattr(self.ego_vehicle, "get_acceleration", None)
+      ego_acceleration = get_acceleration() if get_acceleration is not None else None
+      ego_transform = self.ego_vehicle.get_transform()
+      get_forward_vector = getattr(ego_transform, "get_forward_vector", None)
+      forward = get_forward_vector() if get_forward_vector is not None else None
+      longitudinal_accel = (ego_acceleration.x * forward.x + ego_acceleration.y * forward.y
+                            if ego_acceleration is not None and forward is not None else None)
       self._write({
         "type": "control_sample", "scene_time_s": elapsed_s,
         "ego_speed_mps": math.sqrt(ego_velocity.x ** 2 + ego_velocity.y ** 2 + ego_velocity.z ** 2),
+        "ego_accel_mps2": finite_or_none(longitudinal_accel) if longitudinal_accel is not None else None,
         "ego_brake": float(self.ego_vehicle.get_control().brake),
         "openpilot": self.latest_openpilot,
         "bridge_control": self.latest_bridge_control,
@@ -781,7 +790,8 @@ class MotorcycleWeaveScene:
     source_paths = ("openpilot/tools/sim/bridge/carla/scenes/motorcycle_weave.py",
                     "openpilot/tools/sim/bridge/common.py",
                     "openpilot/tools/sim/bridge/carla/carla_world.py",
-                    "openpilot/selfdrive/controls/lib/longitudinal_planner.py")
+                    "openpilot/selfdrive/controls/lib/longitudinal_planner.py",
+                    "openpilot/selfdrive/controls/lib/vn_traffic_policy.py")
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,
                               text=True, check=False, timeout=5)
     try:
@@ -800,6 +810,8 @@ class MotorcycleWeaveScene:
       "carla_map": getattr(self, "carla_map_name", None),
       "carla_server_version": getattr(self, "carla_server_version", None),
       "params": captured_params,
+      "vn_traffic_mode": os.environ.get("VN_TRAFFIC_MODE", "0"),
+      "vn_traffic_profile": os.environ.get("VN_TRAFFIC_PROFILE", "balanced"),
       "source_sha256": {name: sha256_path(root / name) for name in source_paths},
       "onnx_sha256": {name: sha256_path(model_dir / name) for name in artifact_names},
       "compiled_artifact_sha256": {path.name: sha256_path(path) for path in compiled},

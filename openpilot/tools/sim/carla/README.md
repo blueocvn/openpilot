@@ -78,3 +78,44 @@ offline only and reports unknown when geometry is ambiguous:
 uv run python ../analyze_motorcycle_weave.py \
   ../../../../.carla/reports/motorcycle-weave-YYYYMMDD-HHMMSS-NNNNNNNNN
 ```
+
+### Phase 2: simulation-only Vietnam traffic mode
+
+`VN_TRAFFIC_MODE=1` enables an opt-in low-speed positive-acceleration ramp in
+the longitudinal planner. It is active only with `SIMULATION=1`, openpilot
+longitudinal engaged, and experimental mode off. The default is `0` (stock).
+`VN_TRAFFIC_PROFILE` accepts `balanced` (default), `gentle`, or `responsive`.
+The policy leaves deceleration/braking requests, lead selection, following
+distance, model weights, and actuator bridge unchanged. It must not be treated
+as a vehicle-ready safety improvement.
+
+Run a 60-second visible baseline in WSL, then repeat with the candidate; use
+the same town, spawn, seed, camera, Params, and scene settings for each pair:
+
+```bash
+VN_TRAFFIC_MODE=0 bash run.sh all --openpilot-longitudinal \
+  --carla-town Town04_Opt --carla-spawn-point 40 \
+  --carla-scene motorcycle_weave --carla-scene-case alternating \
+  --carla-scene-seed 42 --carla-scene-duration 60 --no-experimental-mode
+
+VN_TRAFFIC_MODE=1 VN_TRAFFIC_PROFILE=balanced bash run.sh all --openpilot-longitudinal \
+  --carla-town Town04_Opt --carla-spawn-point 40 \
+  --carla-scene motorcycle_weave --carla-scene-case alternating \
+  --carla-scene-seed 42 --carla-scene-duration 60 --no-experimental-mode
+```
+
+Use `gentle` and `responsive` for the other tuning runs; seeds 42–44 are for
+selection and 45–49 for independent confirmation. Run episodes sequentially,
+not headless. After each pair, compare the two report directories in order:
+
+```bash
+uv run python ../analyze_vn_traffic.py \
+  ../../../../.carla/reports/BASELINE_DIRECTORY \
+  ../../../../.carla/reports/CANDIDATE_DIRECTORY
+```
+
+The report streams rotated JSONL segments and shows actual/requested jerk,
+distance, observed lead TTC, contact and disengagement. It marks irregular
+10 Hz telemetry invalid and excludes comfort samples after the first contact.
+A passing single pair is not Phase 2 acceptance; the full validation set and
+visual clips are still required.

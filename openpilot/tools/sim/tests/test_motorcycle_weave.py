@@ -125,6 +125,28 @@ class TestMotorcycleWeaveSchedule(unittest.TestCase):
     self.assertEqual([r["scene_time_s"] for r in records if r["type"] == "ground_truth"], [0.0, 0.5])
     self.assertEqual(controls[2]["ego_brake"], 0.12)
 
+  def test_control_sample_records_measured_longitudinal_acceleration(self):
+    class Ego:
+      def get_transform(self):
+        return SimpleNamespace(get_forward_vector=lambda: SimpleNamespace(x=1.0, y=0.0, z=0.0))
+
+      def get_velocity(self):
+        return SimpleNamespace(x=8.0, y=0.0, z=0.0)
+
+      def get_acceleration(self):
+        return SimpleNamespace(x=-1.25, y=3.0, z=0.0)
+
+      def get_control(self):
+        return SimpleNamespace(brake=0.1, throttle=0.0)
+
+    scene = MotorcycleWeaveScene(object(), object(), Ego(), [], duration_s=0)
+    scene.start_time_s = 0.0
+    records = []
+    scene._write = records.append
+    scene.after_tick(0.0)
+    control = next(record for record in records if record["type"] == "control_sample")
+    self.assertEqual(control["ego_accel_mps2"], -1.25)
+
   def test_streaming_summary_attributes_brake_to_a_single_cut_in(self):
     records = iter([
       {"type": "ground_truth", "scene_time_s": 0.0, "ego_speed_mps": 8.3, "actors": []},
