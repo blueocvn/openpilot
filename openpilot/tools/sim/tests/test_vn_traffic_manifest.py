@@ -18,6 +18,9 @@ class TestTrafficManifest(unittest.TestCase):
       self.assertEqual(manifest["vn_traffic_mode"], "1")
       self.assertEqual(manifest["vn_traffic_profile"], "gentle")
       self.assertIn("openpilot/selfdrive/controls/lib/vn_traffic_policy.py", manifest["source_sha256"])
+      self.assertIn("openpilot/tools/sim/planner_trace.py", manifest["source_sha256"])
+      self.assertIn("openpilot/selfdrive/modeld/modeld.py", manifest["source_sha256"])
+      self.assertIsInstance(manifest["git_dirty_paths"], list)
 
 
 if __name__ == "__main__":

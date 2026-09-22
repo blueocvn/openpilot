@@ -140,7 +140,14 @@ class ModelState:
   def __init__(self, cam_w: int, cam_h: int, usbgpu: bool):
     input_devices = get_tg_input_devices(PROCESS_NAME, usbgpu)
     self.WARP_DEV, self.QUEUE_DEV = input_devices['WARP_DEV'], input_devices['QUEUE_DEV']
-    jits = load_oob(open_file_chunked(modeld_pkl_path(usbgpu)))
+    artifact_path = modeld_pkl_path(usbgpu)
+    jits = load_oob(open_file_chunked(artifact_path))
+    if os.environ.get("SIMULATION") == "1" and (report_path := os.environ.get("VN_TRAFFIC_REPORT_PATH")):
+      try:
+        from openpilot.tools.sim.model_provenance import record_loaded_artifact
+        record_loaded_artifact(report_path, artifact_path)
+      except Exception as exc:
+        cloudlog.error("simulation model artifact receipt unavailable: %s", exc)
     metadata = jits['metadata']
     self.input_shapes = metadata['input_shapes']
     self.vision_input_names = [k for k in self.input_shapes if 'img' in k]

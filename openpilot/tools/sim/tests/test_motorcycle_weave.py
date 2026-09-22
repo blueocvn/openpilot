@@ -33,6 +33,7 @@ from openpilot.tools.sim.bridge.carla.scenes.motorcycle_weave import (
   param_value_text,
   background_cut_in_ready,
   ego_relative_longitudinal,
+  compact_actor_geometry,
   should_retire_completed,
 )
 from openpilot.tools.sim.bridge.carla.scenes.report import RotatingReport
@@ -171,6 +172,7 @@ class TestMotorcycleWeaveSchedule(unittest.TestCase):
     self.assertEqual(match_radar_lead_actor(lead, [bike]), 42)
     self.assertIsNone(match_radar_lead_actor(lead, [bike, {"id": 43, "ego_forward_gap_m": 7.1,
                                                          "ego_lateral_offset_m": 0.2}]))
+    self.assertIsNone(match_radar_lead_actor(lead, [{**bike, "ego_lateral_offset_m": -1.7}]))
     self.assertIsNone(match_radar_lead_actor({"present": False, "distance_m": 7.0}, [bike]))
 
   def test_tracking_gate_ignores_samples_after_first_contact(self):
@@ -835,6 +837,14 @@ class TestMotorcycleWeaveSchedule(unittest.TestCase):
 
     self.assertAlmostEqual(longitudinal, -3.0)
     self.assertAlmostEqual(lateral, 1.0)
+
+  def test_compact_actor_geometry_keeps_signed_lateral_and_bumper_gap(self):
+    result = compact_actor_geometry(7, "cut_in", ego_x=0.0, ego_y=0.0, ego_yaw_deg=0.0,
+                                    ego_half_length_m=2.0, actor_x=10.0, actor_y=-3.0,
+                                    actor_half_length_m=1.0)
+    self.assertEqual(result["id"], 7)
+    self.assertEqual(result["ego_forward_gap_m"], 7.0)
+    self.assertEqual(result["ego_lateral_offset_m"], -3.0)
 
   def test_actor_tracking_gate_uses_lateral_error_not_longitudinal_lag(self):
     """Catches a stable lane trajectory failing because a motorcycle is slightly behind schedule."""

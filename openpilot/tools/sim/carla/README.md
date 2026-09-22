@@ -122,3 +122,46 @@ distance, observed lead TTC, contact and disengagement. It marks irregular
 10 Hz telemetry invalid and excludes comfort samples after the first contact.
 A passing single pair is not Phase 2 acceptance; the full validation set and
 visual clips are still required.
+
+### Trustworthy Phase 1 / Phase 2 comparison gates
+
+Phase 1 is stock Openpilot (`VN_TRAFFIC_MODE=0`); Phase 2 is the existing
+simulation-only policy (`=1`). The scene and observer code are shared. Each
+visible, finite run writes a manifest, rotated 10 Hz control/actor records,
+2 Hz ground truth, and a separate rotated planner-input trace. Replay the
+*same* recorded inputs through the stock Phase 1 planner and the current
+mode-0 planner before scoring a run:
+
+```bash
+.venv/bin/python -m openpilot.tools.sim.planner_trace \
+  .carla/reports/REPORT_DIRECTORY
+.venv/bin/python -m openpilot.tools.sim.analyze_vn_traffic \
+  .carla/reports/BASELINE_DIRECTORY .carla/reports/CANDIDATE_DIRECTORY
+```
+
+Run these commands from the repository root in WSL. The comparison prints
+`run_valid` for each run, then separate `comparison_valid` and
+`phase2_improved`; `pass` requires both. A missing or ambiguous radar lead is
+reported as an observation, not silently assigned to the cut-in motorcycle.
+The scene records actual cut-in exposures (entry gap, ego/bike speed, lane
+hold, contact, and evidence state). It compares only same-direction exposures
+within fixed calipers: 2 m entry gap, 1.5 m/s ego speed, and 0.5 s lane hold;
+each pair needs at least two matches per direction. Scheduled 6–8 m gaps and
+1.5–2 s holds remain targets and are reported rather than post-hoc gates.
+Lateral P95/max remains a diagnostic, never a criterion used to select runs.
+Control, ground truth, pose attribution, and planner traces must cover the
+entire 60 s episode without sample gaps; an Openpilot snapshot older than
+250 ms invalidates attribution. Contact is retained as an outcome and comfort
+after first contact is excluded.
+
+The manifest hashes the model sources, compiled artifacts, and relevant
+source files, and records dirty source paths. `model-runtime.json` records
+the artifact chunks actually loaded by modeld. The ONNX-to-compiled-artifact
+link is a separate required gate: a runtime hash match alone does **not**
+establish that link. Until a reproducible build proves it, reports must say
+`run_valid=false` and must not claim Phase 2 improvement. Existing older
+reports are diagnostic only, not acceptance evidence. After scene tracking
+passes on seeds 42–44, freeze the scene and run seeds 45–49 twice per seed
+and mode, sequentially with the same town/spawn/camera/Params/model/bridge.
+Have a person capture a timestamped clip for each cut-in direction and
+compare it with lead, acceleration, and actual brake logs.
