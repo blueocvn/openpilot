@@ -81,6 +81,9 @@ uv run python ../analyze_motorcycle_weave.py \
 
 ### Phase 2: simulation-only Vietnam traffic mode
 
+The [Phase 2 architecture note](../../../../docs/architecture/vietnam-traffic-phase2.md)
+maps the planner, CARLA bridge, telemetry, and the remaining acceptance gates.
+
 `VN_TRAFFIC_MODE=1` enables an opt-in low-speed positive-acceleration ramp in
 the longitudinal planner. It is active only with `SIMULATION=1`, openpilot
 longitudinal engaged, and experimental mode off. The default is `0` (stock).
