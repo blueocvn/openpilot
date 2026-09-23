@@ -242,9 +242,9 @@ class TestMotorcycleWeaveSchedule(unittest.TestCase):
     self.assertEqual(getattr(run_bridge, "CARLA_SCENE_VARIANTS", None),
                      tuple(getattr(weave, "SCENE_VARIANTS", ())))
 
-  def test_close_cut_in_is_single_event_seeded_and_inside_hazard_ranges(self):
-    first = ContinuousWeaveScheduler("right_to_left", seed=42, variant="close_cut_in")
-    second = ContinuousWeaveScheduler("right_to_left", seed=42, variant="close_cut_in")
+  def test_close_cut_in_alternates_two_seeded_events_inside_hazard_ranges(self):
+    first = ContinuousWeaveScheduler("alternating", seed=42, variant="close_cut_in")
+    second = ContinuousWeaveScheduler("alternating", seed=42, variant="close_cut_in")
     event = first.propose(0.0, ego_speed_mps=8.33, available_road_m=100.0, actor_available=True)
     replay = second.propose(0.0, ego_speed_mps=8.33, available_road_m=100.0, actor_available=True)
     self.assertEqual(event, replay)
@@ -253,9 +253,11 @@ class TestMotorcycleWeaveSchedule(unittest.TestCase):
     self.assertTrue(1.0 <= event.entry_s <= 1.3)
     self.assertTrue(1.5 <= event.hold_s <= 2.0)
     first.commit(event)
-    self.assertTrue(getattr(first, "exhausted", False))
-    self.assertIsNone(first.propose(event.next_start_time_s, ego_speed_mps=8.33,
-                                    available_road_m=100.0, actor_available=True))
+    second_event = first.propose(event.next_start_time_s, ego_speed_mps=8.33,
+                                 available_road_m=100.0, actor_available=True)
+    self.assertEqual(second_event.direction, "left_to_right")
+    first.commit(second_event)
+    self.assertTrue(first.exhausted)
 
   def test_close_cut_in_deferral_does_not_consume_the_only_event(self):
     scheduler = ContinuousWeaveScheduler("left_to_right", seed=44, variant="close_cut_in")
@@ -393,7 +395,7 @@ class TestMotorcycleWeaveSchedule(unittest.TestCase):
       self.assertTrue(records[0]["from_staged_background"])
       self.assertFalse(records[0]["front_of_ego_teleport"])
       self.assertTrue(records[0]["spawn_footprints_clear"])
-      self.assertEqual(scene.scheduler.exhausted, variant == "close_cut_in")
+      self.assertFalse(scene.scheduler.exhausted)
 
   def test_background_attempt_does_not_require_hazard_to_be_finished(self):
     ego = SimpleNamespace(get_velocity=lambda: SimpleNamespace(x=8.33, y=0.0, z=0.0),
@@ -584,6 +586,21 @@ class TestMotorcycleWeaveSchedule(unittest.TestCase):
                                           normal_impulse=SimpleNamespace(x=0.0, y=0.0, z=0.0)))
     self.assertEqual([record["other_actor_role"] for record in records],
                      ["active_cut_in", "background", "other"])
+
+  def test_close_cut_in_defers_second_direction_after_active_contact(self):
+    active = SimpleNamespace(id=42, type_id="vehicle.vespa.zx125", is_alive=False)
+    scene = MotorcycleWeaveScene(object(), object(), object(), [], variant="close_cut_in")
+    scene.ready_time_s = 0.0
+    scene.start_time_s = 0.0
+    scene._actors = [{"actor": active}]
+    records = []
+    scene._write = records.append
+    scene._on_collision(SimpleNamespace(other_actor=active))
+    scene._actors = []
+    scene.before_tick(1.0)
+    self.assertTrue(scene._active_cut_in_contact)
+    self.assertEqual(records[-1]["type"], "cut_in_deferred")
+    self.assertEqual(records[-1]["reason"], "active_cut_in_contact")
 
   def test_unfinished_close_cut_in_contact_is_counted_at_end_of_stream(self):
     summary = summarize_records(iter((

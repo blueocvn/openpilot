@@ -50,7 +50,7 @@ SCENE_VARIANTS = {
   "close_cut_in": SceneVariantConfig(
     interval_s=(2.0, 2.5), speed_mps=(4.0, 4.8), merge_gap_m=(2.5, 3.5),
     entry_s=(1.0, 1.3), hold_s=(1.5, 2.0), exit_s=(1.3, 1.6),
-    staging_margin_m=0.3, entry_delay_s=0.6, max_events=1,
+    staging_margin_m=0.3, entry_delay_s=0.6, max_events=2,
   ),
 }
 
@@ -464,6 +464,8 @@ class MotorcycleWeaveScene:
     self._actors = []
     self._background = []
     self._collisions = deque(maxlen=32)
+    self._active_cut_in_contact = False
+    self._deferred_after_contact = False
     self._last_sample_time_s = None
     self._last_control_sample_s = None
     self.latest_openpilot = {"available": False}
@@ -530,6 +532,13 @@ class MotorcycleWeaveScene:
           self._retire_actor(item, elapsed_s)
 
     self._update_background(elapsed_s)
+
+    if self.variant == "close_cut_in" and self._active_cut_in_contact:
+      if not self._deferred_after_contact:
+        self._write({"type": "cut_in_deferred", "scene_time_s": elapsed_s,
+                     "reason": "active_cut_in_contact"})
+        self._deferred_after_contact = True
+      return
 
     if not self.latest_openpilot.get("active", False) or not self.latest_openpilot.get("long_active", False):
       return
@@ -1110,6 +1119,8 @@ class MotorcycleWeaveScene:
       "other_actor_role": self._actor_role(other.id),
       "impulse_norm": impulse_norm,
     }
+    if getattr(self, "variant", "standard") == "close_cut_in" and record["other_actor_role"] == "active_cut_in":
+      self._active_cut_in_contact = True
     self._collisions.append(record)
     self._write(record)
 

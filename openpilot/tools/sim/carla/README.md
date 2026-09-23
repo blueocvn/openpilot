@@ -34,6 +34,10 @@ bash run.sh all --openpilot-longitudinal \
 
 ## Vietnam dense motorcycle weave
 
+Branch names do not select behavior. `VN_TRAFFIC_MODE=0` is Original stock
+Openpilot and `VN_TRAFFIC_MODE=1` enables the simulation-only enhancement;
+both modes run the same named scene variants.
+
 The scene commands 30 km/h cruise and starts after openpilot longitudinal is
 active and ego reaches 7.5 m/s. It maintains 3–5 Vespas in the two adjacent
 lanes at 5–7 m/s. A warmed-up motorcycle from that flow becomes the next
@@ -78,6 +82,35 @@ offline only and reports unknown when geometry is ambiguous:
 uv run python ../analyze_motorcycle_weave.py \
   ../../../../.carla/reports/motorcycle-weave-YYYYMMDD-HHMMSS-NNNNNNNNN
 ```
+
+### Original close cut-in baseline
+
+`close_cut_in` is a scene-only stress case for the Original baseline. One
+motorcycle enters the ego lane at a measured target gap of 2.5–3.5 m while
+the ego is traveling at 30 km/h, then remains in lane for 1.5–2.0 seconds.
+It is intentionally close enough that contact is an expected result to
+measure; it does not change model weights, radar, planner, MPC, policy, or
+the actuator bridge. The actor is first staged in an adjacent lane, never
+spawned overlapping the ego, and never teleported in front of it.
+
+Run this visibly in WSL from this directory. It schedules right→left first,
+then left→right in the same episode. If the first cut-in contacts the ego, the
+second is recorded as deferred rather than forced into compromised physics.
+Use the same command with `VN_TRAFFIC_MODE=1` only later when comparing the
+enhancement; that comparison is outside this Original scene implementation.
+
+```bash
+VN_TRAFFIC_MODE=0 bash run.sh all --openpilot-longitudinal \
+  --carla-town Town04_Opt --carla-spawn-point 40 \
+  --carla-scene motorcycle_weave --carla-scene-variant close_cut_in \
+  --carla-scene-case alternating --carla-scene-seed 42 \
+  --carla-scene-duration 30 --no-experimental-mode
+```
+
+For the acceptance set, run seeds 42, 43, and 44 and keep every report,
+including runs that avoid contact or defer the second direction. Analyze each
+exact report directory with the command above; the summary reports the entered
+gap, entry TTC, active-cut-in contacts, and other contacts.
 
 ### Phase 2: simulation-only Vietnam traffic mode
 
