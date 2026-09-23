@@ -241,6 +241,33 @@ class TestMotorcycleWeaveSchedule(unittest.TestCase):
     self.assertEqual(getattr(run_bridge, "CARLA_SCENE_VARIANTS", None),
                      tuple(getattr(weave, "SCENE_VARIANTS", ())))
 
+  def test_close_cut_in_is_single_event_seeded_and_inside_hazard_ranges(self):
+    first = ContinuousWeaveScheduler("right_to_left", seed=42, variant="close_cut_in")
+    second = ContinuousWeaveScheduler("right_to_left", seed=42, variant="close_cut_in")
+    event = first.propose(0.0, ego_speed_mps=8.33, available_road_m=100.0, actor_available=True)
+    replay = second.propose(0.0, ego_speed_mps=8.33, available_road_m=100.0, actor_available=True)
+    self.assertEqual(event, replay)
+    self.assertTrue(4.0 <= event.speed_mps <= 4.8)
+    self.assertTrue(2.5 <= event.merge_gap_m <= 3.5)
+    self.assertTrue(1.0 <= event.entry_s <= 1.3)
+    self.assertTrue(1.5 <= event.hold_s <= 2.0)
+    first.commit(event)
+    self.assertTrue(getattr(first, "exhausted", False))
+    self.assertIsNone(first.propose(event.next_start_time_s, ego_speed_mps=8.33,
+                                    available_road_m=100.0, actor_available=True))
+
+  def test_close_cut_in_deferral_does_not_consume_the_only_event(self):
+    scheduler = ContinuousWeaveScheduler("left_to_right", seed=44, variant="close_cut_in")
+    self.assertIsNone(scheduler.propose(0.0, ego_speed_mps=8.33,
+                                        available_road_m=10.0, actor_available=True))
+    self.assertFalse(getattr(scheduler, "exhausted", False))
+    event = scheduler.propose(0.0, ego_speed_mps=8.33,
+                              available_road_m=100.0, actor_available=True)
+    replay = ContinuousWeaveScheduler("left_to_right", seed=44, variant="close_cut_in").propose(
+      0.0, ego_speed_mps=8.33, available_road_m=100.0, actor_available=True)
+    self.assertEqual(event, replay)
+    self.assertTrue(2.5 <= event.merge_gap_m <= 3.5)
+
   def test_seeded_scheduler_repeats_directions_and_stays_inside_requested_ranges(self):
     first = ContinuousWeaveScheduler("alternating", seed=42)
     second = ContinuousWeaveScheduler("alternating", seed=42)
@@ -305,11 +332,14 @@ class TestMotorcycleWeaveSchedule(unittest.TestCase):
     event = SimpleNamespace(speed_mps=5.0, merge_gap_m=7.0, entry_s=1.3)
     required = 7.0 + 3.5 + (8.3 - 5.2) * 1.3 + 1.2
     self.assertTrue(background_cut_in_ready(event, distance_m=required, ego_speed_mps=8.3,
-                                            bike_speed_mps=5.2, vehicle_length_buffer_m=3.5))
+                                            bike_speed_mps=5.2, vehicle_length_buffer_m=3.5,
+                                            staging_margin_m=1.2))
     self.assertFalse(background_cut_in_ready(event, distance_m=required, ego_speed_mps=8.3,
-                                             bike_speed_mps=3.0, vehicle_length_buffer_m=3.5))
+                                             bike_speed_mps=3.0, vehicle_length_buffer_m=3.5,
+                                             staging_margin_m=1.2))
     self.assertFalse(background_cut_in_ready(event, distance_m=10.0, ego_speed_mps=8.3,
-                                             bike_speed_mps=5.2, vehicle_length_buffer_m=3.5))
+                                             bike_speed_mps=5.2, vehicle_length_buffer_m=3.5,
+                                             staging_margin_m=1.2))
 
   def test_cut_in_promotes_a_moving_background_actor_without_teleport(self):
     class Lane:
@@ -334,19 +364,24 @@ class TestMotorcycleWeaveSchedule(unittest.TestCase):
       def set_transform(self, _transform):
         raise AssertionError("a visible bike was teleported")
 
-    actor = Actor()
     world = SimpleNamespace(get_map=lambda: SimpleNamespace(get_waypoint=lambda *_args, **_kwargs: Lane(1)))
-    scene = MotorcycleWeaveScene(SimpleNamespace(LaneType=SimpleNamespace(Driving="driving")),
-                                 world, object(), [actor])
-    item = {"actor": actor, "side": "right", "speed_mps": 5.0}
-    scene._background.append(item)
-    records = []
-    scene._write = records.append
-    event = scene.scheduler.propose(0.0, ego_speed_mps=8.33, available_road_m=100.0, actor_available=True)
-    self.assertTrue(scene._start_pass(event, Lane(2), Lane(3), Lane(1), item))
-    self.assertEqual(scene._background, [])
-    self.assertIs(scene._actors[0]["actor"], actor)
-    self.assertTrue(records[0]["from_staged_background"])
+    for variant in ("standard", "close_cut_in"):
+      actor = Actor()
+      scene = MotorcycleWeaveScene(SimpleNamespace(LaneType=SimpleNamespace(Driving="driving")),
+                                   world, object(), [actor], variant=variant)
+      item = {"actor": actor, "side": "right", "speed_mps": 5.0}
+      scene._background.append(item)
+      records = []
+      scene._write = records.append
+      event = scene.scheduler.propose(0.0, ego_speed_mps=8.33, available_road_m=100.0, actor_available=True)
+      self.assertTrue(scene._start_pass(event, Lane(2), Lane(3), Lane(1), item))
+      scene.scheduler.commit(event)
+      self.assertEqual(scene._background, [])
+      self.assertIs(scene._actors[0]["actor"], actor)
+      self.assertTrue(records[0]["from_staged_background"])
+      self.assertFalse(records[0]["front_of_ego_teleport"])
+      self.assertTrue(records[0]["spawn_footprints_clear"])
+      self.assertEqual(scene.scheduler.exhausted, variant == "close_cut_in")
 
   def test_background_attempt_does_not_require_hazard_to_be_finished(self):
     ego = SimpleNamespace(get_velocity=lambda: SimpleNamespace(x=8.33, y=0.0, z=0.0),

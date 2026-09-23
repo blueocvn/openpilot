@@ -113,20 +113,21 @@ class ContinuousWeaveScheduler:
     self._pending = None
     self._pending_rng_state = None
 
+  @property
+  def exhausted(self) -> bool:
+    return self.config.max_events is not None and self.event_index >= self.config.max_events
+
   def propose(self, now_s: float, *, ego_speed_mps: float, available_road_m: float,
               actor_available: bool, vehicle_length_buffer_m: float = 3.5) -> ContinuousPass | None:
-    if now_s < self.next_due_s or ego_speed_mps < SCENE_READY_SPEED_MPS or not actor_available:
+    if self.exhausted or now_s < self.next_due_s or ego_speed_mps < SCENE_READY_SPEED_MPS or not actor_available:
       return None
     state = self.rng.getstate()
-    interval_s = self.rng.uniform(2.0, 3.0)
-    speed_mps = self.rng.uniform(4.5, 5.5)
-    merge_gap_m = self.rng.uniform(6.0, 8.0)
-    entry_s = self.rng.uniform(1.15, 1.55)
-    # The physical Vespa reaches and leaves the lane center after the
-    # reference changes phase; this shorter programmed plateau targets a
-    # measured 1.5–2.0 s lane occupation.
-    hold_s = self.rng.uniform(0.75, 1.05)
-    exit_s = self.rng.uniform(1.3, 1.6)
+    interval_s = self.rng.uniform(*self.config.interval_s)
+    speed_mps = self.rng.uniform(*self.config.speed_mps)
+    merge_gap_m = self.rng.uniform(*self.config.merge_gap_m)
+    entry_s = self.rng.uniform(*self.config.entry_s)
+    hold_s = self.rng.uniform(*self.config.hold_s)
+    exit_s = self.rng.uniform(*self.config.exit_s)
     start_distance = merge_gap_m + vehicle_length_buffer_m + (ego_speed_mps - speed_mps) * entry_s
     event = ContinuousPass(self.directions[self.event_index % len(self.directions)], now_s, interval_s,
                            speed_mps, merge_gap_m, entry_s, hold_s, exit_s, start_distance)
@@ -266,10 +267,11 @@ def advance_path_distance(distance_m, *, velocity_x, velocity_y, route_yaw_deg, 
   return distance_m + max(forward_speed, 0.0) * max(dt_s, 0.0)
 
 
-def background_cut_in_ready(event, *, distance_m, ego_speed_mps, bike_speed_mps, vehicle_length_buffer_m):
+def background_cut_in_ready(event, *, distance_m, ego_speed_mps, bike_speed_mps, vehicle_length_buffer_m,
+                            staging_margin_m):
   if abs(bike_speed_mps - event.speed_mps) > 1.0:
     return False
-  required_distance = (event.merge_gap_m + STAGING_GAP_MARGIN_M + vehicle_length_buffer_m +
+  required_distance = (event.merge_gap_m + staging_margin_m + vehicle_length_buffer_m +
                        (ego_speed_mps - bike_speed_mps) * event.entry_s)
   return abs(distance_m - required_distance) <= 0.5
 
@@ -440,7 +442,7 @@ class MotorcycleWeaveScene:
   EXIT_LATERAL_LOOKAHEAD_M = 1.2
 
   def __init__(self, carla, world, ego_vehicle, actor_sink, *, case="alternating", seed=42,
-               duration_s=45.0, report_dir=None):
+               variant="standard", duration_s=45.0, report_dir=None):
     if duration_s < 0:
       raise ValueError("duration_s must be nonnegative")
     self.carla = carla
@@ -448,9 +450,10 @@ class MotorcycleWeaveScene:
     self.ego_vehicle = ego_vehicle
     self.actor_sink = actor_sink
     self.case = case
+    self.variant = variant
     self.seed = seed
     self.duration_s = duration_s
-    self.scheduler = ContinuousWeaveScheduler(case, seed)
+    self.scheduler = ContinuousWeaveScheduler(case, seed, variant)
     self.background_scheduler = BackgroundTrafficScheduler(seed)
     self.ready_time_s = None
     self.start_time_s = None
@@ -533,6 +536,8 @@ class MotorcycleWeaveScene:
     ego_lane, left_lane, right_lane, available_road_m = lanes
     if self._ego_speed() >= SCENE_READY_SPEED_MPS:
       self._maintain_background(elapsed_s, left_lane, right_lane)
+    if self.scheduler.exhausted:
+      return
     if elapsed_s < self.scheduler.next_due_s:
       return
     direction = self.scheduler.directions[self.scheduler.event_index % len(self.scheduler.directions)]
@@ -565,7 +570,8 @@ class MotorcycleWeaveScene:
       velocity = actor.get_velocity()
       actor_speed = math.sqrt(velocity.x ** 2 + velocity.y ** 2 + velocity.z ** 2)
       if background_cut_in_ready(event, distance_m=center_distance, ego_speed_mps=self._ego_speed(),
-                                 bike_speed_mps=actor_speed, vehicle_length_buffer_m=buffer_m):
+                                 bike_speed_mps=actor_speed, vehicle_length_buffer_m=buffer_m,
+                                 staging_margin_m=self.scheduler.config.staging_margin_m):
         if self._start_pass(event, ego_lane, left_lane, right_lane, item):
           self.scheduler.commit(event)
         return
