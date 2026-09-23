@@ -342,6 +342,17 @@ class TestMotorcycleWeaveSchedule(unittest.TestCase):
                                              bike_speed_mps=5.2, vehicle_length_buffer_m=3.5,
                                              staging_margin_m=1.2))
 
+  def test_background_promotion_accounts_for_close_cut_in_controller_entry_delay(self):
+    event = SimpleNamespace(speed_mps=4.0, merge_gap_m=3.0, entry_s=1.0, entry_delay_s=0.5)
+    nominal_distance = 3.0 + 0.3 + 3.5 + (8.0 - 4.0) * 1.0
+    self.assertFalse(background_cut_in_ready(event, distance_m=nominal_distance, ego_speed_mps=8.0,
+                                             bike_speed_mps=4.0, vehicle_length_buffer_m=3.5,
+                                             staging_margin_m=0.3))
+    delayed_distance = nominal_distance + (8.0 - 4.0) * 0.5
+    self.assertTrue(background_cut_in_ready(event, distance_m=delayed_distance, ego_speed_mps=8.0,
+                                            bike_speed_mps=4.0, vehicle_length_buffer_m=3.5,
+                                            staging_margin_m=0.3))
+
   def test_cut_in_promotes_a_moving_background_actor_without_teleport(self):
     class Lane:
       road_id = 1

@@ -37,6 +37,7 @@ class SceneVariantConfig:
   hold_s: tuple[float, float]
   exit_s: tuple[float, float]
   staging_margin_m: float
+  entry_delay_s: float
   max_events: int | None
 
 
@@ -44,12 +45,12 @@ SCENE_VARIANTS = {
   "standard": SceneVariantConfig(
     interval_s=(2.0, 3.0), speed_mps=(4.5, 5.5), merge_gap_m=(6.0, 8.0),
     entry_s=(1.15, 1.55), hold_s=(0.75, 1.05), exit_s=(1.3, 1.6),
-    staging_margin_m=STAGING_GAP_MARGIN_M, max_events=None,
+    staging_margin_m=STAGING_GAP_MARGIN_M, entry_delay_s=0.0, max_events=None,
   ),
   "close_cut_in": SceneVariantConfig(
     interval_s=(2.0, 2.5), speed_mps=(4.0, 4.8), merge_gap_m=(2.5, 3.5),
     entry_s=(1.0, 1.3), hold_s=(1.5, 2.0), exit_s=(1.3, 1.6),
-    staging_margin_m=0.3, max_events=1,
+    staging_margin_m=0.3, entry_delay_s=0.5, max_events=1,
   ),
 }
 
@@ -73,6 +74,7 @@ class ContinuousPass:
   hold_s: float
   exit_s: float
   spawn_center_distance_m: float
+  entry_delay_s: float = 0.0
 
   @property
   def total_s(self) -> float:
@@ -128,9 +130,10 @@ class ContinuousWeaveScheduler:
     entry_s = self.rng.uniform(*self.config.entry_s)
     hold_s = self.rng.uniform(*self.config.hold_s)
     exit_s = self.rng.uniform(*self.config.exit_s)
-    start_distance = merge_gap_m + vehicle_length_buffer_m + (ego_speed_mps - speed_mps) * entry_s
+    entry_time_s = entry_s + self.config.entry_delay_s
+    start_distance = merge_gap_m + vehicle_length_buffer_m + (ego_speed_mps - speed_mps) * entry_time_s
     event = ContinuousPass(self.directions[self.event_index % len(self.directions)], now_s, interval_s,
-                           speed_mps, merge_gap_m, entry_s, hold_s, exit_s, start_distance)
+                           speed_mps, merge_gap_m, entry_s, hold_s, exit_s, start_distance, self.config.entry_delay_s)
     next_rng_state = self.rng.getstate()
     self.rng.setstate(state)
     if available_road_m < start_distance + speed_mps * event.total_s + 20.0:
@@ -272,7 +275,7 @@ def background_cut_in_ready(event, *, distance_m, ego_speed_mps, bike_speed_mps,
   if abs(bike_speed_mps - event.speed_mps) > 1.0:
     return False
   required_distance = (event.merge_gap_m + staging_margin_m + vehicle_length_buffer_m +
-                       (ego_speed_mps - bike_speed_mps) * event.entry_s)
+                       (ego_speed_mps - bike_speed_mps) * (event.entry_s + getattr(event, "entry_delay_s", 0.0)))
   return abs(distance_m - required_distance) <= 0.5
 
 
