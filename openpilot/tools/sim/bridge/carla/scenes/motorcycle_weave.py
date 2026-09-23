@@ -50,7 +50,7 @@ SCENE_VARIANTS = {
   "close_cut_in": SceneVariantConfig(
     interval_s=(2.0, 2.5), speed_mps=(4.0, 4.8), merge_gap_m=(2.5, 3.5),
     entry_s=(1.0, 1.3), hold_s=(1.5, 2.0), exit_s=(1.3, 1.6),
-    staging_margin_m=0.3, entry_delay_s=0.5, max_events=1,
+    staging_margin_m=0.3, entry_delay_s=0.6, max_events=1,
   ),
 }
 
