@@ -189,14 +189,31 @@ def summarize_records(records):
   cut_ins_with_matched_lead = 0
   collision_event_count = 0
   first_collision_s = None
+  scene_variant = None
+  cut_in_started_count = 0
+  cut_in_entered_count = 0
+  active_cut_in_contact_ids = set()
+  other_contact_ids = set()
+  entry_gap_m = None
+  entry_closing_speed_mps = None
+  entry_ttc_s = None
   evaluation = _Evaluation()
   for record in records:
-    if record.get("type") == "cut_in_started":
+    if record.get("type") == "scenario_started":
+      scene_variant = record.get("scene_variant", scene_variant)
+    elif record.get("type") == "cut_in_started":
+      cut_in_started_count += 1
+      scene_variant = record.get("scene_variant", scene_variant)
       if first_cut_in_time is None:
         first_cut_in_time = record["scene_time_s"]
         evaluation = _Evaluation()
       active_event = {"actor_id": record.get("actor_id"), "lead": False, "matched_lead": False,
                       "brake": False, "collision": False}
+    elif record.get("type") == "cut_in_entered_ego_lane":
+      cut_in_entered_count += 1
+      entry_gap_m = record.get("actual_gap_m")
+      entry_closing_speed_mps = record.get("closing_speed_mps")
+      entry_ttc_s = record.get("entry_ttc_s")
     elif record.get("type") == "cut_in_finished":
       completed_cut_ins += 1
       if active_event is not None and record.get("actor_id") == active_event["actor_id"]:
@@ -211,7 +228,12 @@ def summarize_records(records):
         first_collision_s = record.get("scene_time_s")
       if first_cut_in_time is not None:
         evaluation.collisions.add((record.get("other_actor_id"), record.get("other_actor_type")))
-      if active_event is not None and record.get("other_actor_id") == active_event["actor_id"]:
+      other_actor_id = record.get("other_actor_id")
+      active_cut_in_contact = record.get("other_actor_role") == "active_cut_in" or (
+        active_event is not None and other_actor_id == active_event["actor_id"])
+      if other_actor_id is not None:
+        (active_cut_in_contact_ids if active_cut_in_contact else other_contact_ids).add(other_actor_id)
+      if active_event is not None and other_actor_id == active_event["actor_id"]:
         active_event["collision"] = True
     elif record.get("type") == "control_sample":
       high_rate_controls = True
@@ -266,6 +288,14 @@ def summarize_records(records):
                              p95_speed_error is not None and p95_lateral_error <= 0.4 and
                              maximum_lateral_error <= 0.8 and p95_speed_error <= 1.0),
     "tracking_samples_after_contact_excluded": evaluation.tracking_samples_after_contact_excluded,
+    "scene_variant": scene_variant,
+    "cut_in_started_count": cut_in_started_count,
+    "cut_in_entered_count": cut_in_entered_count,
+    "active_cut_in_contact_count": len(active_cut_in_contact_ids),
+    "other_contact_count": len(other_contact_ids),
+    "entry_gap_m": entry_gap_m,
+    "entry_closing_speed_mps": entry_closing_speed_mps,
+    "entry_ttc_s": entry_ttc_s,
     "completed_cut_in_count": completed_cut_ins,
     "cut_ins_with_lead_count": cut_ins_with_lead,
     "cut_ins_with_matched_lead_count": cut_ins_with_matched_lead,

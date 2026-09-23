@@ -838,6 +838,7 @@ class MotorcycleWeaveScene:
       "type": "scenario_started",
       "scene": "motorcycle_weave",
       "case": self.case,
+      "scene_variant": self.variant,
       "seed": self.seed,
       "duration_s": self.duration_s,
     })
@@ -883,7 +884,7 @@ class MotorcycleWeaveScene:
       "schema_version": 1,
       "git_commit": revision.stdout.strip() if revision.returncode == 0 else None,
       "git_dirty_paths": dirty.stdout.splitlines() if dirty.returncode == 0 else None,
-      "scene": "motorcycle_weave", "case": self.case, "seed": self.seed,
+      "scene": "motorcycle_weave", "case": self.case, "scene_variant": self.variant, "seed": self.seed,
       "duration_s": self.duration_s, "command_argv": sys.argv,
       "carla_map": getattr(self, "carla_map_name", None),
       "carla_server_version": getattr(self, "carla_server_version", None),
@@ -951,6 +952,7 @@ class MotorcycleWeaveScene:
                 last_progress_time_s=None, entered_ego_lane_at=None, left_ego_lane_at=None)
     self._write({"type": "cut_in_started", "scene_time_s": event.start_time_s,
                  "actor_id": actor.id, "direction": event.direction,
+                 "scene_variant": self.variant,
                  "speed_mps": event.speed_mps, "merge_gap_m": event.merge_gap_m,
                  "entry_s": event.entry_s, "hold_s": event.hold_s, "exit_s": event.exit_s,
                  "from_staged_background": True,
@@ -1049,9 +1051,12 @@ class MotorcycleWeaveScene:
       actor_velocity = item["actor"].get_velocity() if hasattr(item["actor"], "get_velocity") else None
       bike_speed = (math.sqrt(sum(component ** 2 for component in (
         actor_velocity.x, actor_velocity.y, actor_velocity.z))) if actor_velocity is not None else None)
+      closing_speed = ego_speed - bike_speed if ego_speed is not None and bike_speed is not None else None
+      entry_ttc_s = gap_m / closing_speed if gap_m is not None and closing_speed is not None and closing_speed > 0 else None
       self._write({"type": "cut_in_entered_ego_lane", "scene_time_s": elapsed_s,
                    "actor_id": item["actor"].id, "actual_path_distance_m": item["progress_m"],
-                   "actual_gap_m": gap_m, "ego_speed_mps": ego_speed, "bike_speed_mps": bike_speed})
+                  "actual_gap_m": gap_m, "ego_speed_mps": ego_speed, "bike_speed_mps": bike_speed,
+                  "closing_speed_mps": closing_speed, "entry_ttc_s": entry_ttc_s})
     elif abs(lateral_offset) > 0.6 and item["entered_ego_lane_at"] is not None and item["left_ego_lane_at"] is None:
       item["left_ego_lane_at"] = elapsed_s
       self._write({"type": "cut_in_left_ego_lane", "scene_time_s": elapsed_s,
@@ -1079,6 +1084,13 @@ class MotorcycleWeaveScene:
       brake=brake,
     ))
 
+  def _actor_role(self, actor_id):
+    if any(item["actor"].id == actor_id for item in self._actors):
+      return "active_cut_in"
+    if any(item["actor"].id == actor_id for item in self._background):
+      return "background"
+    return "other"
+
   def _on_collision(self, event):
     other = event.other_actor
     impulse = getattr(event, "normal_impulse", None)
@@ -1092,6 +1104,7 @@ class MotorcycleWeaveScene:
       "frame": getattr(event, "frame", None),
       "other_actor_id": other.id,
       "other_actor_type": other.type_id,
+      "other_actor_role": self._actor_role(other.id),
       "impulse_norm": impulse_norm,
     }
     self._collisions.append(record)

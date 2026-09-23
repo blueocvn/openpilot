@@ -1,4 +1,5 @@
 import unittest
+from collections import deque
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -556,6 +557,42 @@ class TestMotorcycleWeaveSchedule(unittest.TestCase):
     self.assertEqual(records[0]["frame"], 123)
     self.assertEqual(records[0]["other_actor_id"], 42)
     self.assertEqual(records[0]["impulse_norm"], 5.0)
+
+  def test_collision_callback_distinguishes_active_cut_in_background_and_other(self):
+    active = SimpleNamespace(id=42, type_id="vehicle.vespa.zx125")
+    background = SimpleNamespace(id=43, type_id="vehicle.vespa.zx125")
+    scene = MotorcycleWeaveScene.__new__(MotorcycleWeaveScene)
+    scene.start_time_s = 10.0
+    scene._actors = [{"actor": active}]
+    scene._background = [{"actor": background}]
+    scene._collisions = deque(maxlen=32)
+    records = []
+    scene._write = records.append
+    for frame, other_actor in enumerate((active, background, SimpleNamespace(id=44, type_id="vehicle.tesla.model3"))):
+      scene._on_collision(SimpleNamespace(timestamp=11.0, frame=frame, other_actor=other_actor,
+                                          normal_impulse=SimpleNamespace(x=0.0, y=0.0, z=0.0)))
+    self.assertEqual([record["other_actor_role"] for record in records],
+                     ["active_cut_in", "background", "other"])
+
+  def test_unfinished_close_cut_in_contact_is_counted_at_end_of_stream(self):
+    summary = summarize_records(iter((
+      {"type": "scenario_started", "scene_variant": "close_cut_in"},
+      {"type": "ground_truth", "scene_time_s": 0.0, "ego_speed_mps": 8.33, "actors": []},
+      {"type": "cut_in_started", "scene_time_s": 1.0, "actor_id": 42},
+      {"type": "cut_in_entered_ego_lane", "scene_time_s": 2.0, "actor_id": 42,
+       "actual_gap_m": 3.0, "closing_speed_mps": 4.0, "entry_ttc_s": 0.75},
+      {"type": "collision", "scene_time_s": 3.0, "other_actor_id": 42,
+       "other_actor_type": "vehicle.vespa.zx125", "other_actor_role": "active_cut_in"},
+      {"type": "ground_truth", "scene_time_s": 4.0, "ego_speed_mps": 7.0, "actors": []},
+    )))
+    self.assertEqual(summary["scene_variant"], "close_cut_in")
+    self.assertEqual(summary["cut_in_started_count"], 1)
+    self.assertEqual(summary["cut_in_entered_count"], 1)
+    self.assertEqual(summary["active_cut_in_contact_count"], 1)
+    self.assertEqual(summary["other_contact_count"], 0)
+    self.assertEqual(summary["entry_gap_m"], 3.0)
+    self.assertEqual(summary["entry_closing_speed_mps"], 4.0)
+    self.assertEqual(summary["entry_ttc_s"], 0.75)
 
   def test_two_runs_started_same_second_never_overwrite_a_report(self):
     with TemporaryDirectory() as directory, \
