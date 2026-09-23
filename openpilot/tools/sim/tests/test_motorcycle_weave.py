@@ -37,6 +37,7 @@ from openpilot.tools.sim.bridge.carla.scenes.motorcycle_weave import (
   should_retire_completed,
 )
 from openpilot.tools.sim.bridge.carla.scenes.report import RotatingReport
+from openpilot.tools.sim import run_bridge
 from openpilot.tools.sim.run_bridge import parse_args, should_poll_keyboard
 
 
@@ -210,6 +211,35 @@ class TestMotorcycleWeaveSchedule(unittest.TestCase):
     self.assertEqual(args.carla_scene_duration, 0.0)
     with self.assertRaises(SystemExit):
       parse_args(["--carla-scene-duration", "-1"])
+
+  def test_carla_cli_preserves_close_cut_in_variant(self):
+    try:
+      args = parse_args([
+        "--simulator", "carla", "--carla-scene", "motorcycle_weave",
+        "--carla-scene-case", "left_to_right",
+        "--carla-scene-variant", "close_cut_in",
+      ])
+    except SystemExit:
+      args = None
+    self.assertIsNotNone(args)
+    self.assertEqual(args.carla_scene_variant, "close_cut_in")
+
+  def test_standard_variant_remains_the_default(self):
+    args = parse_args(["--simulator", "carla", "--carla-scene", "motorcycle_weave"])
+    self.assertTrue(hasattr(args, "carla_scene_variant"))
+    self.assertEqual(args.carla_scene_variant, "standard")
+    scheduler = ContinuousWeaveScheduler("alternating", seed=42)
+    self.assertEqual(getattr(scheduler, "variant", None), "standard")
+
+  def test_scheduler_rejects_unknown_variant(self):
+    with self.assertRaises(Exception) as context:
+      ContinuousWeaveScheduler("alternating", seed=42, variant="unknown")
+    self.assertIsInstance(context.exception, ValueError)
+    self.assertIn("unknown motorcycle weave variant", str(context.exception))
+
+  def test_cli_and_scheduler_expose_the_same_scene_variants(self):
+    self.assertEqual(getattr(run_bridge, "CARLA_SCENE_VARIANTS", None),
+                     tuple(getattr(weave, "SCENE_VARIANTS", ())))
 
   def test_seeded_scheduler_repeats_directions_and_stays_inside_requested_ranges(self):
     first = ContinuousWeaveScheduler("alternating", seed=42)

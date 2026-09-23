@@ -9,6 +9,9 @@ from uuid import uuid4
 from typing import Any
 from multiprocessing import Queue
 
+CARLA_SCENE_VARIANTS = ("standard", "close_cut_in")
+
+
 def create_bridge(dual_camera, high_quality, simulator="metadrive", **kwargs):
   queue: Any = Queue()
 
@@ -48,6 +51,7 @@ def parse_args(add_args=None):
   parser.add_argument('--carla-scene', choices=('none', 'motorcycle_weave'), default='none')
   parser.add_argument('--carla-scene-case', choices=('right_to_left', 'left_to_right', 'alternating'),
                       default='alternating')
+  parser.add_argument('--carla-scene-variant', choices=CARLA_SCENE_VARIANTS, default='standard')
   parser.add_argument('--carla-scene-seed', type=int, default=42)
   parser.add_argument('--carla-scene-duration', type=float, default=45.0,
                       help='simulated seconds; 0 runs until manually stopped')
@@ -114,6 +118,7 @@ if __name__ == "__main__":
       'experimental_mode': args.experimental_mode,
       'carla_scene': args.carla_scene,
       'carla_scene_case': args.carla_scene_case,
+      'carla_scene_variant': args.carla_scene_variant,
       'carla_scene_seed': args.carla_scene_seed,
       'carla_scene_duration': args.carla_scene_duration,
       'carla_report_dir': args.carla_report_dir,

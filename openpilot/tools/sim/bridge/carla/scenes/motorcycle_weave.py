@@ -29,6 +29,32 @@ STAGING_GAP_MARGIN_M = 1.2
 
 
 @dataclass(frozen=True)
+class SceneVariantConfig:
+  interval_s: tuple[float, float]
+  speed_mps: tuple[float, float]
+  merge_gap_m: tuple[float, float]
+  entry_s: tuple[float, float]
+  hold_s: tuple[float, float]
+  exit_s: tuple[float, float]
+  staging_margin_m: float
+  max_events: int | None
+
+
+SCENE_VARIANTS = {
+  "standard": SceneVariantConfig(
+    interval_s=(2.0, 3.0), speed_mps=(4.5, 5.5), merge_gap_m=(6.0, 8.0),
+    entry_s=(1.15, 1.55), hold_s=(0.75, 1.05), exit_s=(1.3, 1.6),
+    staging_margin_m=STAGING_GAP_MARGIN_M, max_events=None,
+  ),
+  "close_cut_in": SceneVariantConfig(
+    interval_s=(2.0, 2.5), speed_mps=(4.0, 4.8), merge_gap_m=(2.5, 3.5),
+    entry_s=(1.0, 1.3), hold_s=(1.5, 2.0), exit_s=(1.3, 1.6),
+    staging_margin_m=0.3, max_events=1,
+  ),
+}
+
+
+@dataclass(frozen=True)
 class WeaveEvent:
   direction: str
   start_time_s: float
@@ -68,7 +94,7 @@ def pass_lateral_progress(event: ContinuousPass, elapsed_s: float) -> float:
 class ContinuousWeaveScheduler:
   """Seeded event timing; scene owns CARLA actors and validates their placement."""
 
-  def __init__(self, case: str, seed: int):
+  def __init__(self, case: str, seed: int, variant: str = "standard"):
     directions = {
       "right_to_left": ("right_to_left",),
       "left_to_right": ("left_to_right",),
@@ -76,7 +102,11 @@ class ContinuousWeaveScheduler:
     }
     if case not in directions:
       raise ValueError(f"unknown motorcycle weave case: {case}")
+    if variant not in SCENE_VARIANTS:
+      raise ValueError(f"unknown motorcycle weave variant: {variant}")
     self.directions = directions[case]
+    self.variant = variant
+    self.config = SCENE_VARIANTS[variant]
     self.rng = random.Random(seed)
     self.next_due_s = 0.0
     self.event_index = 0

@@ -36,7 +36,7 @@ class CarlaBridge(SimulatorBridge):
   def __init__(self, dual_camera, high_quality, host=None, port=2000,
                town="Town10HD_Opt", spawn_point=16, test_duration=math.inf, test_run=False,
                openpilot_longitudinal=False, carla_scene="none", carla_scene_case="alternating",
-               carla_scene_seed=42, carla_scene_duration=45.0, carla_report_dir=None,
+               carla_scene_variant="standard", carla_scene_seed=42, carla_scene_duration=45.0, carla_report_dir=None,
                experimental_mode=None):
     self.alpha_longitudinal_enabled = openpilot_longitudinal
     self.experimental_mode_enabled = False if carla_scene != "none" and experimental_mode is None else experimental_mode
@@ -50,6 +50,7 @@ class CarlaBridge(SimulatorBridge):
     self.test_run = test_run
     self.carla_scene = carla_scene
     self.carla_scene_case = carla_scene_case
+    self.carla_scene_variant = carla_scene_variant
     self.carla_scene_seed = carla_scene_seed
     self.carla_scene_duration = carla_scene_duration
     self.carla_report_dir = carla_report_dir
@@ -57,4 +58,4 @@ class CarlaBridge(SimulatorBridge):
   def spawn_world(self, queue: Queue):
     return CarlaWorld(queue, self.host, self.port, self.town, self.spawn_point,
                       self.dual_camera, self.high_quality, self.carla_scene, self.carla_scene_case,
-                      self.carla_scene_seed, self.carla_scene_duration, self.carla_report_dir)
+                      self.carla_scene_variant, self.carla_scene_seed, self.carla_scene_duration, self.carla_report_dir)

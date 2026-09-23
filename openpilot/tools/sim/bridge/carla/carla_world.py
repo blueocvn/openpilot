@@ -35,7 +35,8 @@ class CarlaWorld(World):
   FIXED_DELTA_SECONDS = 0.05
 
   def __init__(self, status_q, host, port, town, spawn_point, dual_camera=False, high_quality=False,
-               scene="none", scene_case="alternating", scene_seed=42, scene_duration=45.0, report_dir=None):
+               scene="none", scene_case="alternating", scene_variant="standard", scene_seed=42,
+               scene_duration=45.0, report_dir=None):
     super().__init__(dual_camera)
     # Keep CARLA optional for users of the MetaDrive backend.
     import carla
@@ -103,7 +104,7 @@ class CarlaWorld(World):
       from openpilot.tools.sim.bridge.carla.scenes.motorcycle_weave import MotorcycleWeaveScene
       self.scene = MotorcycleWeaveScene(
         self.carla, self.world, self.vehicle, self.actors, case=scene_case, seed=scene_seed,
-        duration_s=scene_duration, report_dir=report_dir,
+        variant=scene_variant, duration_s=scene_duration, report_dir=report_dir,
       )
       self.scene.carla_server_version = self.client.get_server_version()
       self.scene.carla_map_name = self.world.get_map().name
