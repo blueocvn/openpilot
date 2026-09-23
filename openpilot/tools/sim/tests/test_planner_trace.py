@@ -92,6 +92,26 @@ class TestPlannerTrace(unittest.TestCase):
       self.assertEqual(health["planner_trace_first_tick_ns"], 1000)
       self.assertEqual(health["planner_trace_last_tick_ns"], 1002)
 
+  def test_records_phase_two_following_diagnostic_after_planner_update(self):
+    class Planner:
+      output_a_target = -0.5
+      mpc = type("Mpc", (), {"source": "lead0"})()
+      traffic_follow = type("Policy", (), {"diagnostic": {
+        "stage": "closing_lead", "lead_index": 1, "ttc_s": 3.0,
+        "extra_s": 0.03, "t_follow_s": 1.48,
+      }})()
+
+    with TemporaryDirectory() as directory:
+      recorder = PlannerTraceRecorder(Path(directory), {})
+      recorder.record(_Master(), tick_time_ns=1000)
+      recorder.record_output(Planner())
+      recorder.close()
+      records = list(iter_report_records(Path(directory) / "planner"))
+      output = next(record for record in records if record["type"] == "planner_output")
+      self.assertEqual(output["sequence"], 0)
+      self.assertEqual(output["traffic_follow"]["stage"], "closing_lead")
+      self.assertAlmostEqual(output["traffic_follow"]["t_follow_s"], 1.48)
+
   def test_missing_planner_tick_invalidates_trace(self):
     with TemporaryDirectory() as directory:
       recorder = PlannerTraceRecorder(Path(directory), {}, max_bytes=1000)

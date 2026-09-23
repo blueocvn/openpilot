@@ -6,6 +6,7 @@ from unittest.mock import patch
 from openpilot.cereal import messaging
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
+from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc
 
 
 def cruise_messages():
@@ -34,6 +35,16 @@ def cruise_messages():
   }
 
 
+def closing_lead_messages():
+  messages = cruise_messages()
+  lead = messages["radarState"].leadOne
+  lead.present = True
+  lead.dRel = 10.0
+  lead.vLead = 5.0
+  lead.vRel = -3.0
+  return messages
+
+
 class TestTrafficPlannerIntegration(unittest.TestCase):
   def test_opt_in_only_reduces_positive_acceleration_in_simulation(self):
     cp = SimpleNamespace(openpilotLongitudinalControl=True, longitudinalActuatorDelay=0.2,
@@ -56,6 +67,26 @@ class TestTrafficPlannerIntegration(unittest.TestCase):
     with patch.dict(os.environ, {"VN_TRAFFIC_MODE": "1", "VN_TRAFFIC_PROFILE": "not-a-profile"}):
       with self.assertRaises(ValueError):
         LongitudinalPlanner(cp)
+
+  def test_mpc_rejects_headway_override_that_shortens_stock_or_is_invalid(self):
+    mpc = LongitudinalMpc.__new__(LongitudinalMpc)
+    radar = messaging.new_message("radarState").radarState
+    for override in (1.0, float("nan"), float("inf")):
+      with self.assertRaises(ValueError):
+        mpc.update(radar, t_follow_override=override)
+
+  def test_mode_one_increases_mpc_headway_for_observed_closing_lead(self):
+    cp = SimpleNamespace(openpilotLongitudinalControl=True, longitudinalActuatorDelay=0.2,
+                         steerRatio=12.0, wheelbase=2.9)
+    with patch.dict(os.environ, {"SIMULATION": "1", "VN_TRAFFIC_MODE": "0"}):
+      stock = LongitudinalPlanner(cp)
+    with patch.dict(os.environ, {"SIMULATION": "1", "VN_TRAFFIC_MODE": "1"}):
+      traffic = LongitudinalPlanner(cp)
+    stock.update(closing_lead_messages())
+    traffic.update(closing_lead_messages())
+    self.assertAlmostEqual(stock.mpc.params[0, 4], 1.25)
+    self.assertGreater(traffic.mpc.params[0, 4], stock.mpc.params[0, 4])
+    self.assertEqual(traffic.traffic_follow.diagnostic["stage"], "closing_lead")
 
 
 if __name__ == "__main__":

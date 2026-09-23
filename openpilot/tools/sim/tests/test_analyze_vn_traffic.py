@@ -6,7 +6,9 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from openpilot.tools.sim.analyze_vn_traffic import assess_run, classify_lead, compare_traffic_runs, main, summarize_traffic_records
+from openpilot.tools.sim.analyze_vn_traffic import (assess_run, classify_lead, compare_traffic_runs, main,
+                                                    runtime_receipt_matches_episode, summarize_planner_stage_records,
+                                                    summarize_traffic_records)
 
 
 def control(t, speed, request, *, active=True):
@@ -131,6 +133,7 @@ class TestTrafficAnalysis(unittest.TestCase):
   def test_pairwise_acceptance_rejects_contact_or_progress_regression(self):
     baseline = {"vn_traffic_mode": "0", "seed": 42, "actor_tracking_valid": True,
                 "run_valid": True,
+                "runtime_artifact_sha256": {"driving_tinygrad.pkl.chunk0": "same"},
                 "p95_abs_actual_jerk_mps3": 4.0, "accel_decel_switch_count": 3,
                 "distance_m": 100.0, "contact_count": 0, "disengagement_count": 0,
                 "minimum_observed_ttc_s": 2.0, "minimum_actor_clearance_m": 5.0, "data_valid": True,
@@ -178,21 +181,66 @@ class TestTrafficAnalysis(unittest.TestCase):
     summary = {"data_valid": True, "ground_truth_valid": True, "actor_tracking_valid": True,
                "cut_in_geometry_valid": True, "lead_attribution_valid": True, "exposure_valid": True,
                "completed_by_direction": {"right_to_left": 2, "left_to_right": 2},
-               "duration_s": 60.0, "planner_trace_valid": True, "mode_zero_parity_verified": True,
-               "runtime_artifact_verified": True,
-               "compiled_source_link_verified": True,
+               "duration_s": 60.0, "planner_trace_valid": True, "planner_output_complete": True,
+               "mode_zero_parity_verified": True,
+               "runtime_artifact_verified": True, "runtime_receipt_associated": True,
+               "runtime_artifact_sha256": {"driving_tinygrad.pkl.chunk0": "same"},
+               "compiled_source_link_verified": False,
                "scenario_start_monotonic_ns": 1_000_000_000,
                "scenario_finish_monotonic_ns": 61_000_000_000,
                "planner_trace_first_tick_ns": 999_000_000,
                "planner_trace_last_tick_ns": 61_001_000_000}
     manifest = {"duration_s": 60}
     self.assertTrue(assess_run(summary, manifest)["run_valid"])
-    self.assertFalse(assess_run({**summary, "compiled_source_link_verified": False}, manifest)["run_valid"])
+    self.assertTrue(assess_run({**summary, "compiled_source_link_verified": False}, manifest)["run_valid"])
     self.assertFalse(assess_run({**summary, "planner_trace_valid": False}, manifest)["run_valid"])
     self.assertFalse(assess_run({**summary, "runtime_artifact_verified": False}, manifest)["run_valid"])
+    self.assertFalse(assess_run({**summary, "runtime_receipt_associated": False}, manifest)["run_valid"])
     self.assertFalse(assess_run({**summary, "lead_attribution_valid": False}, manifest)["run_valid"])
     self.assertFalse(assess_run({**summary, "completed_by_direction": {"right_to_left": 4}}, manifest)["run_valid"])
     self.assertFalse(assess_run({**summary, "planner_trace_last_tick_ns": 50_000_000_000}, manifest)["run_valid"])
+
+  def test_comparison_requires_identical_runtime_loaded_model_hashes(self):
+    common = {"run_valid": True, "data_valid": True, "actual_accel_source": "carla",
+              "p95_abs_actual_jerk_mps3": 4.0, "accel_decel_switch_count": 2,
+              "distance_m": 100.0, "contact_count": 0, "disengagement_count": 0,
+              "exposures": []}
+    baseline = {**common, "vn_traffic_mode": "0",
+                "runtime_artifact_sha256": {"driving_tinygrad.pkl.chunk0": "a"}}
+    candidate = {**common, "vn_traffic_mode": "1", "p95_abs_actual_jerk_mps3": 2.0,
+                 "runtime_artifact_sha256": {"driving_tinygrad.pkl.chunk0": "b"}}
+    result = compare_traffic_runs(baseline, candidate)
+    self.assertFalse(result["comparison_valid"])
+    self.assertIn("runtime loaded model differs", result["validity_failures"])
+
+  def test_stage_diagnostics_keep_model_radar_and_policy_separate(self):
+    records = [
+      {"type": "planner_input", "sequence": 0, "tick_time_ns": 1, "data": {
+        "modelV2": {"leadsV3": [{"prob": 0.8}]},
+        "radarState": {"leadOne": {"present": False}, "leadTwo": {"present": True}},
+      }},
+      {"type": "planner_output", "sequence": 0, "tick_time_ns": 2,
+       "traffic_follow": {"stage": "closing_lead", "lead_index": 2}},
+      {"type": "planner_input", "sequence": 1, "tick_time_ns": 3, "data": {
+        "modelV2": {"leadsV3": []},
+        "radarState": {"leadOne": {"present": True}, "leadTwo": {"present": False}},
+      }},
+      {"type": "planner_output", "sequence": 1, "tick_time_ns": 4,
+       "traffic_follow": {"stage": "threat_cleared", "lead_index": None}},
+    ]
+    result = summarize_planner_stage_records(iter(records))
+    self.assertEqual(result["model_candidate_present_count"], 1)
+    self.assertEqual(result["radar_lead_one_present_count"], 1)
+    self.assertEqual(result["radar_lead_two_present_count"], 1)
+    self.assertEqual(result["traffic_follow_active_count"], 1)
+    self.assertEqual(result["traffic_follow_selected_lead_two_count"], 1)
+    self.assertTrue(result["planner_output_complete"])
+
+  def test_runtime_receipt_must_precede_this_episode(self):
+    summary = {"scenario_start_monotonic_ns": 200, "planner_trace_first_tick_ns": 150}
+    self.assertTrue(runtime_receipt_matches_episode(summary, {"loaded_at_monotonic_ns": 100}))
+    self.assertFalse(runtime_receipt_matches_episode(summary, {"loaded_at_monotonic_ns": 175}))
+    self.assertFalse(runtime_receipt_matches_episode(summary, {}))
 
   def test_ground_truth_gap_is_not_hidden_by_complete_control_telemetry(self):
     summary = summarize_traffic_records(iter([

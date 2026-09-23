@@ -289,17 +289,74 @@ def assess_run(summary, manifest):
   expected, actual = manifest.get("duration_s"), summary.get("duration_s")
   if expected is None or expected <= 0 or actual is None or abs(actual - expected) > max(0.25, expected * 0.01):
     failures.append("finite episode did not complete configured duration")
-  if summary.get("compiled_source_link_verified") is not True:
-    failures.append("compiled_source_link_verified not verified")
   start, finish = summary.get("scenario_start_monotonic_ns"), summary.get("scenario_finish_monotonic_ns")
   first_tick, last_tick = summary.get("planner_trace_first_tick_ns"), summary.get("planner_trace_last_tick_ns")
   if (not all(isinstance(value, int) for value in (start, finish, first_tick, last_tick)) or
       start >= finish or first_tick > start + 100_000_000 or last_tick < finish - 100_000_000):
     failures.append("planner trace does not cover full episode")
-  for key in ("runtime_artifact_verified", "planner_trace_valid", "mode_zero_parity_verified"):
+  for key in ("runtime_artifact_verified", "runtime_receipt_associated", "planner_trace_valid",
+              "planner_output_complete", "mode_zero_parity_verified"):
     if summary.get(key) is not True:
       failures.append(f"{key} not verified")
   return {"run_valid": not failures, "run_validity_failures": failures}
+
+
+def summarize_planner_stage_records(records):
+  """Summarize perception and policy stages without feeding them back to planning."""
+  result = {
+    "planner_input_count": 0, "planner_output_count": 0,
+    "model_candidate_present_count": 0,
+    "radar_lead_one_present_count": 0, "radar_lead_two_present_count": 0,
+    "traffic_follow_active_count": 0,
+    "traffic_follow_selected_lead_one_count": 0,
+    "traffic_follow_selected_lead_two_count": 0,
+  }
+  expected_input_sequence = expected_output_sequence = 0
+  pending_input = None
+  output_sequence_valid = True
+  for record in records:
+    if record.get("type") == "planner_input":
+      result["planner_input_count"] += 1
+      sequence = record.get("sequence")
+      timestamp = record.get("tick_time_ns")
+      if sequence != expected_input_sequence or not isinstance(timestamp, int) or pending_input is not None:
+        output_sequence_valid = False
+      pending_input = (sequence, timestamp)
+      expected_input_sequence += 1
+      data = record.get("data") or {}
+      model = data.get("modelV2") or {}
+      if any((lead.get("prob") or 0.0) >= 0.5 for lead in model.get("leadsV3") or []):
+        result["model_candidate_present_count"] += 1
+      radar = data.get("radarState") or {}
+      result["radar_lead_one_present_count"] += bool((radar.get("leadOne") or {}).get("present"))
+      result["radar_lead_two_present_count"] += bool((radar.get("leadTwo") or {}).get("present"))
+    elif record.get("type") == "planner_output":
+      result["planner_output_count"] += 1
+      sequence = record.get("sequence")
+      timestamp = record.get("tick_time_ns")
+      if (sequence != expected_output_sequence or not isinstance(timestamp, int) or pending_input is None or
+          sequence != pending_input[0] or timestamp < pending_input[1] or timestamp - pending_input[1] > 1_000_000_000):
+        output_sequence_valid = False
+      pending_input = None
+      expected_output_sequence += 1
+      diagnostic = record.get("traffic_follow") or {}
+      if diagnostic.get("stage") == "closing_lead":
+        result["traffic_follow_active_count"] += 1
+        index = diagnostic.get("lead_index")
+        if index in (1, 2):
+          result[f"traffic_follow_selected_lead_{'one' if index == 1 else 'two'}_count"] += 1
+  result["planner_output_complete"] = (result["planner_input_count"] >= 2 and output_sequence_valid and
+                                        pending_input is None and
+                                        result["planner_output_count"] == result["planner_input_count"])
+  return result
+
+
+def runtime_receipt_matches_episode(summary, receipt):
+  loaded_at = receipt.get("loaded_at_monotonic_ns")
+  scenario_start = summary.get("scenario_start_monotonic_ns")
+  first_tick = summary.get("planner_trace_first_tick_ns")
+  return (isinstance(loaded_at, int) and isinstance(scenario_start, int) and isinstance(first_tick, int) and
+          loaded_at <= scenario_start and loaded_at <= first_tick)
 
 
 def summarize_exposure_windows(records, exposures):
@@ -348,6 +405,9 @@ def compare_traffic_runs(baseline, candidate):
     expected, actual = run.get("configured_duration_s"), run.get("duration_s")
     if expected is not None and expected > 0 and (actual is None or abs(actual - expected) > max(0.25, expected * 0.01)):
       validity_failures.append(f"{label} did not complete configured duration")
+  if (not baseline.get("runtime_artifact_sha256") or
+      baseline.get("runtime_artifact_sha256") != candidate.get("runtime_artifact_sha256")):
+    validity_failures.append("runtime loaded model differs")
   if not baseline.get("run_valid") or not candidate.get("run_valid"):
     validity_failures.append("one or both runs failed evidence gates")
   if not baseline.get("data_valid") or not candidate.get("data_valid"):
@@ -396,6 +456,11 @@ def main():
   for path, summary in zip(args.reports, summaries, strict=True):
     summary["window_outcomes"] = summarize_exposure_windows(iter_report_records(path), summary["exposures"])
     summary.update(trace_health(path))
+    planner_path = path / "planner"
+    if planner_path.exists():
+      summary.update(summarize_planner_stage_records(iter_report_records(planner_path)))
+    else:
+      summary.update(summarize_planner_stage_records(iter(())))
     summary["mode_zero_parity_verified"] = parity_report_valid(path)
     manifest_path = path / "manifest.json"
     if manifest_path.exists():
@@ -409,6 +474,8 @@ def main():
       except (OSError, ValueError):
         build_receipt = {}
       summary["runtime_artifact_verified"] = verify_runtime_artifact(manifest, receipt)
+      summary["runtime_artifact_sha256"] = receipt.get("artifact_sha256")
+      summary["runtime_receipt_associated"] = runtime_receipt_matches_episode(summary, receipt)
       summary["compiled_source_link_verified"], summary["compiled_source_link_reason"] = verify_compiled_source_link(
         manifest, build_receipt, receipt)
       summary["vn_traffic_mode"] = manifest.get("vn_traffic_mode", "unknown")

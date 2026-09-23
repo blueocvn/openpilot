@@ -17,6 +17,12 @@ def update_with_observer(planner, sm, observer):
       cloudlog.error("simulation planner observer disabled: %s", exc)
       observer = None
   planner.update(sm)
+  if observer is not None:
+    try:
+      observer.record_output(planner)
+    except Exception as exc:
+      cloudlog.error("simulation planner output observer disabled: %s", exc)
+      observer = None
   return observer
 
 

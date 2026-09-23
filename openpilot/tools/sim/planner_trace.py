@@ -36,6 +36,14 @@ class PlannerTraceRecorder:
     })
     self.sequence += 1
 
+  def record_output(self, planner):
+    self.report.write({
+      "type": "planner_output", "sequence": self.sequence - 1, "tick_time_ns": time.monotonic_ns(),
+      "a_target_mps2": float(planner.output_a_target),
+      "mpc_source": str(planner.mpc.source),
+      "traffic_follow": dict(planner.traffic_follow.diagnostic),
+    })
+
   def close(self):
     self.report.close()
 
@@ -63,9 +71,10 @@ class ReplayMaster:
     return self.data[service]
 
   def all_checks(self, service_list=None):
-    if service_list is not None:
-      raise ValueError("trace only records full SubMaster all_checks")
-    return self._all_checks
+    if service_list is None:
+      return self._all_checks
+    return all(self.alive[service] and self.valid[service] and self.freq_ok[service]
+               for service in service_list)
 
 
 def trace_health(report_dir: Path):

@@ -84,13 +84,15 @@ uv run python ../analyze_motorcycle_weave.py \
 The [Phase 2 architecture note](../../../../docs/architecture/vietnam-traffic-phase2.md)
 maps the planner, CARLA bridge, telemetry, and the remaining acceptance gates.
 
-`VN_TRAFFIC_MODE=1` enables an opt-in low-speed positive-acceleration ramp in
-the longitudinal planner. It is active only with `SIMULATION=1`, openpilot
-longitudinal engaged, and experimental mode off. The default is `0` (stock).
-`VN_TRAFFIC_PROFILE` accepts `balanced` (default), `gentle`, or `responsive`.
-The policy leaves deceleration/braking requests, lead selection, following
-distance, model weights, and actuator bridge unchanged. It must not be treated
-as a vehicle-ready safety improvement.
+`VN_TRAFFIC_MODE=1` enables two opt-in low-speed policies in the longitudinal
+planner: a positive-acceleration ramp and up to 0.30 s extra following time
+when a fresh `leadOne` or `leadTwo` is closing with TTC below 5 s. It is active
+only with `SIMULATION=1`, openpilot longitudinal engaged, and experimental
+mode off. The default is `0` (stock). `VN_TRAFFIC_PROFILE` accepts `balanced`
+(default), `gentle`, or `responsive`. Lead selection, model weights and the
+actuator bridge are unchanged. The MPC decides the deceleration request from
+the increased gap; the policy does not force brake actuation or improve lead
+detection. It must not be treated as a vehicle-ready safety improvement.
 
 Run a 60-second visible baseline in WSL, then repeat with the candidate; use
 the same town, spawn, seed, camera, Params, and scene settings for each pair:
@@ -156,11 +158,12 @@ after first contact is excluded.
 
 The manifest hashes the model sources, compiled artifacts, and relevant
 source files, and records dirty source paths. `model-runtime.json` records
-the artifact chunks actually loaded by modeld. The ONNX-to-compiled-artifact
-link is a separate required gate: a runtime hash match alone does **not**
-establish that link. Until a reproducible build proves it, reports must say
-`run_valid=false` and must not claim Phase 2 improvement. Existing older
-reports are diagnostic only, not acceptance evidence. After scene tracking
+the artifact chunks actually loaded by modeld. A relative Mode 0/Mode 1
+comparison requires each receipt to match its manifest and the exact loaded
+chunk hash map to match between runs. The ONNX-to-compiled-artifact link is
+reported separately as `compiled_source_link_verified`; the working compiled
+model is not rebuilt for this comparison. Existing older reports are
+diagnostic only, not acceptance evidence. After scene tracking
 passes on seeds 42–44, freeze the scene and run seeds 45–49 twice per seed
 and mode, sequentially with the same town/spawn/camera/Params/model/bridge.
 Have a person capture a timestamped clip for each cut-in direction and
