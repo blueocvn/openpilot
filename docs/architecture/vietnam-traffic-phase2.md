@@ -1,4 +1,4 @@
-# Vietnam traffic mode — kiến trúc Phase 2 v1
+# Vietnam traffic mode — kiến trúc Phase 2
 
 Trạng thái: **đã triển khai dưới cờ thử nghiệm, chưa nghiệm thu** trên nhánh
 `codex/vietnam-traffic-phase2` (từ commit `8ad4325` của Phase 1; code Phase 2
@@ -23,16 +23,17 @@ CARLA actor/ground truth → recorder → report/analyzer (chỉ quan sát)
 | Thành phần | Vai trò và thay đổi |
 | --- | --- |
 | [`motorcycle_weave.py`](../../openpilot/tools/sim/bridge/carla/scenes/motorcycle_weave.py) | Scene Phase 1 vẫn tạo xe máy; Phase 2 chỉ bổ sung mẫu gia tốc dọc CARLA ở 10 Hz và mode/profile vào manifest. Không dùng actor để điều khiển planner. |
-| [`longitudinal_planner.py`](../../openpilot/selfdrive/controls/lib/longitudinal_planner.py) | Sau khi chọn và clip gia tốc stock, gọi policy trước khi lưu `output_a_target` và tích phân `v_desired_filter`. `shouldStop`, nguồn plan và quỹ đạo MPC không bị sửa. |
-| [`vn_traffic_policy.py`](../../openpilot/selfdrive/controls/lib/vn_traffic_policy.py) | Policy thuần, giữ trạng thái ramp dương giữa các tick. Không import simulator/CARLA, không nhận seed, actor ID, sự kiện tương lai hay khoảng hở ground truth. |
+| [`longitudinal_planner.py`](../../openpilot/selfdrive/controls/lib/longitudinal_planner.py) | Tính time-gap Phase 2 từ radar lead trước `mpc.update`, rồi áp dụng ramp gia tốc dương sau khi chọn gia tốc. Mode 0 truyền `None` vào MPC và giữ đường stock. |
+| [`vn_traffic_policy.py`](../../openpilot/selfdrive/controls/lib/vn_traffic_policy.py) | Hai policy thuần: time-gap cho lead đóng nhanh đã quan sát và ramp gia tốc dương. Không import simulator/CARLA, không nhận actor ID hay ground truth. |
+| [`long_mpc.py`](../../openpilot/selfdrive/controls/lib/longitudinal_mpc_lib/long_mpc.py) | Nhận `t_follow_override` tùy chọn. `None` dùng personality stock; override không được ngắn hơn stock. MPC vẫn tự sinh trajectory/gia tốc. |
 | [`controlsd.py`](../../openpilot/selfdrive/controls/controlsd.py), [`longcontrol.py`](../../openpilot/selfdrive/controls/lib/longcontrol.py) | Đường điều khiển stock: `aTarget` qua LongControl để thành `carControl.actuators.accel`. Phase 2 không sửa hai file này. |
 | [`common.py`](../../openpilot/tools/sim/bridge/common.py) | Bridge đổi gia tốc yêu cầu thành ga/phanh CARLA bằng vòng P/I và saturation hiện có; Phase 2 không đổi bridge. |
 | [`analyze_vn_traffic.py`](../../openpilot/tools/sim/analyze_vn_traffic.py) | Đọc report JSONL xoay theo kiểu streaming, tính comfort/safety và so sánh một cặp mode 0/1. Không gửi tín hiệu ngược vào Openpilot. |
 
-Model weights, `modeld`, `radard`, lựa chọn lead, MPC obstacle/danger cost,
-personality follow distance và giới hạn phanh giữ nguyên. `longitudinalPlan`
-vẫn công bố trajectory MPC stock; chỉ `aTarget` được policy sửa, và trạng thái
-mong muốn nội bộ được tích phân từ chính `aTarget` đó.
+Model weights, `modeld`, `radard`, lựa chọn lead, MPC obstacle/danger cost và
+giới hạn phanh giữ nguyên. Phase 2 tăng có điều kiện time-gap của personality
+trước khi MPC giải trajectory, rồi áp dụng ramp dương lên `aTarget` đã chọn.
+Mode 0 tiếp tục dùng time-gap personality stock.
 
 ## Điều kiện bật và thuật toán
 
@@ -64,6 +65,12 @@ lệnh phanh mới và không trì hoãn yêu cầu giảm tốc**. Nó cũng kh
 `shouldStop`. Đây là hạn chế có chủ đích: rung giật do lead/perception hoặc
 pha giảm tốc có thể không được cải thiện.
 
+Trước MPC, follow policy xét cả `leadOne` và `leadTwo` mới không quá 250 ms.
+Với tốc độ đóng trên 0,5 m/s, TTC từ 5 xuống 3 giây làm tăng time-gap từ 0 tới
+0,30 giây. Mức tăng đầy đủ tới 40 km/h, giảm về 0 ở 50 km/h, không vượt tổng
+2,05 giây; rise/fall lần lượt là 0,30/0,15 giây mỗi giây. MPC quyết định gia
+tốc từ time-gap này. Policy không ép brake và không dùng actor CARLA.
+
 ## Quan sát và đối chiếu A/B
 
 Scene ghi event/contact ngay khi xảy ra, ground truth ở 2 Hz và
@@ -71,7 +78,9 @@ Scene ghi event/contact ngay khi xảy ra, ground truth ở 2 Hz và
 (chiếu vector gia tốc lên hướng tiến của ego), tốc độ, phanh thực tế và
 snapshot Openpilot/bridge. File JSONL xoay ở 10 MiB. `manifest.json` ghi
 mode/profile, cấu hình scene, Params và hash source/ONNX/compiled artifact;
-`compiled_source_link_verified=false` vẫn là giới hạn provenance.
+`compiled_source_link_verified=false` được báo riêng như giới hạn về nguồn
+build. A/B tương đối yêu cầu receipt của mỗi run khớp manifest và map hash các
+chunk artifact thực sự được modeld nạp phải giống hệt giữa Mode 0 và Mode 1.
 
 Analyzer tính jerk thực tế từ gia tốc CARLA và timestamp thực; report cũ không
 có gia tốc trực tiếp chỉ được phân tích bằng chênh lệch tốc độ, và scorer không

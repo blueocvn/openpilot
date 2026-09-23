@@ -10,10 +10,10 @@ from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
-from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc, LongitudinalPlanSource
+from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import get_T_FOLLOW, LongitudinalMpc, LongitudinalPlanSource
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_accel_from_plan, should_stop
-from openpilot.selfdrive.controls.lib.vn_traffic_policy import PositiveAccelRamp, TrafficModeConfig
+from openpilot.selfdrive.controls.lib.vn_traffic_policy import PositiveAccelRamp, TrafficFollowPolicy, TrafficModeConfig
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.common.swaglog import cloudlog
 
@@ -61,6 +61,7 @@ class LongitudinalPlanner:
     self.traffic_mode = TrafficModeConfig.from_environment(os.environ)
     self.traffic_simulation = os.environ.get("SIMULATION") == "1"
     self.traffic_ramp = PositiveAccelRamp(self.traffic_mode.profile, dt)
+    self.traffic_follow = TrafficFollowPolicy(dt)
     self.mpc = LongitudinalMpc(dt=dt)
     self.fcw = False
     self.dt = dt
@@ -112,9 +113,27 @@ class LongitudinalPlanner:
     # No change cost when user is controlling the speed, or when standstill
     prev_accel_constraint = not (reset_state or sm['carState'].standstill)
 
+    traffic_active = self.traffic_mode.enabled_for(
+      simulation=self.traffic_simulation,
+      longitudinal_active=self.CP.openpilotLongitudinalControl and not reset_state,
+      experimental=sm['selfdriveState'].experimentalMode,
+    )
+    radar_valid = sm.all_checks(["radarState"]) if hasattr(sm, "all_checks") else True
+    if hasattr(sm, "logMonoTime"):
+      radar_time = sm.logMonoTime.get("radarState", 0)
+      newest_time = max(sm.logMonoTime.values(), default=radar_time)
+      radar_valid = radar_valid and radar_time > 0 and 0 <= newest_time - radar_time <= 250_000_000
+    stock_t_follow = get_T_FOLLOW(sm['selfdriveState'].personality)
+    t_follow = self.traffic_follow.apply(
+      stock_t_follow, speed_mps=v_ego,
+      lead_one=sm['radarState'].leadOne, lead_two=sm['radarState'].leadTwo,
+      active=traffic_active, radar_valid=radar_valid,
+    )
+
     self.mpc.set_weights(prev_accel_constraint, personality=sm['selfdriveState'].personality)
     self.mpc.set_cur_state(self.v_desired_filter.x, self.output_a_target)
-    self.mpc.update(sm['radarState'], personality=sm['selfdriveState'].personality)
+    self.mpc.update(sm['radarState'], personality=sm['selfdriveState'].personality,
+                    t_follow_override=t_follow if traffic_active else None)
 
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
     self.a_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)
@@ -149,14 +168,10 @@ class LongitudinalPlanner:
     self.output_should_stop = any(should_stop for _, _, should_stop in candidates)
     self.output_a_target = np.clip(output_a_target, ACCEL_MIN, ACCEL_MAX)
 
-    traffic_active = self.traffic_mode.enabled_for(
-      simulation=self.traffic_simulation,
-      longitudinal_active=self.CP.openpilotLongitudinalControl and not reset_state and not self.output_should_stop,
-      experimental=sm['selfdriveState'].experimentalMode,
-    )
+    traffic_ramp_active = traffic_active and not self.output_should_stop
     input_valid = sm.all_checks() if hasattr(sm, "all_checks") else True
     self.output_a_target = self.traffic_ramp.apply(
-      self.output_a_target, speed_mps=v_ego, active=traffic_active,
+      self.output_a_target, speed_mps=v_ego, active=traffic_ramp_active,
       standstill=sm['carState'].standstill, input_valid=input_valid,
     )
 

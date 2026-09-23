@@ -14,6 +14,7 @@ import threading
 import time
 
 from openpilot.tools.sim.bridge.carla.scenes.report import RotatingReport
+from openpilot.tools.sim.cut_in_exposure import ExposureCollector
 
 
 DEFAULT_EGO_SPEED_MPS = 30.0 / 3.6
@@ -249,6 +250,17 @@ def ego_relative_longitudinal(ego_x: float, ego_y: float, actor_x: float, actor_
   return math.cos(yaw) * (actor_x - ego_x) + math.sin(yaw) * (actor_y - ego_y)
 
 
+def compact_actor_geometry(actor_id, role, *, ego_x, ego_y, ego_yaw_deg, ego_half_length_m,
+                           actor_x, actor_y, actor_half_length_m):
+  forward = ego_relative_longitudinal(ego_x, ego_y, actor_x, actor_y, ego_yaw_deg)
+  _, lateral = tracking_error_components(actual_x=actor_x, actual_y=actor_y,
+                                         reference_x=ego_x, reference_y=ego_y,
+                                         reference_yaw_deg=ego_yaw_deg)
+  return {"id": actor_id, "role": role,
+          "ego_forward_gap_m": forward - ego_half_length_m - actor_half_length_m,
+          "ego_lateral_offset_m": lateral}
+
+
 def should_retire_completed(*, pass_elapsed_s: float, total_s: float, lateral_error_m: float) -> bool:
   return (pass_elapsed_s >= total_s + 0.5 and abs(lateral_error_m) <= 1.2 or
           pass_elapsed_s >= total_s + 2.0)
@@ -421,9 +433,12 @@ class MotorcycleWeaveScene:
     self.latest_openpilot = {"available": False}
     self.latest_bridge_control = {"controller_active": False}
     root = Path(report_dir) if report_dir else Path(".carla/reports")
-    self.report_dir = root / f"motorcycle-weave-{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1_000_000_000:09d}"
+    shared_report_path = os.environ.get("VN_TRAFFIC_REPORT_PATH")
+    self.report_dir = (Path(shared_report_path) if shared_report_path else
+                       root / f"motorcycle-weave-{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1_000_000_000:09d}")
     self.report_file = None
     self._manifest_thread = None
+    self.exposure_collector = ExposureCollector()
 
   def start_manifest(self):
     self._manifest_thread = threading.Thread(target=self._write_manifest, name="carla-scene-manifest")
@@ -611,11 +626,23 @@ class MotorcycleWeaveScene:
       forward = get_forward_vector() if get_forward_vector is not None else None
       longitudinal_accel = (ego_acceleration.x * forward.x + ego_acceleration.y * forward.y
                             if ego_acceleration is not None and forward is not None else None)
+      compact_actors = []
+      for item in (*self._actors, *self._background):
+        actor = item["actor"]
+        if not actor.is_alive:
+          continue
+        location = actor.get_location()
+        role = "cut_in" if "event" in item else "background"
+        compact_actors.append(compact_actor_geometry(
+          actor.id, role, ego_x=ego_transform.location.x, ego_y=ego_transform.location.y,
+          ego_yaw_deg=ego_transform.rotation.yaw, ego_half_length_m=self.ego_vehicle.bounding_box.extent.x,
+          actor_x=location.x, actor_y=location.y, actor_half_length_m=actor.bounding_box.extent.x))
       self._write({
         "type": "control_sample", "scene_time_s": elapsed_s,
         "ego_speed_mps": math.sqrt(ego_velocity.x ** 2 + ego_velocity.y ** 2 + ego_velocity.z ** 2),
         "ego_accel_mps2": finite_or_none(longitudinal_accel) if longitudinal_accel is not None else None,
         "ego_brake": float(self.ego_vehicle.get_control().brake),
+        "actors": compact_actors,
         "openpilot": self.latest_openpilot,
         "bridge_control": self.latest_bridge_control,
       })
@@ -725,6 +752,7 @@ class MotorcycleWeaveScene:
       mono_time = getattr(sm, "logMonoTime", {})
       self.latest_openpilot = {
         "available": True,
+        "snapshot_monotonic_ns": time.monotonic_ns(),
         "active": bool(selfdrive_state.active),
         "long_active": bool(car_control.longActive),
         "selfdrive_state": str(getattr(selfdrive_state, "state", "unknown")),
@@ -761,6 +789,8 @@ class MotorcycleWeaveScene:
       return
     elapsed_s = None if self.start_time_s is None or simulation_time_s is None else simulation_time_s - self.start_time_s
     self._write({"type": "scenario_closed", "scene_time_s": elapsed_s})
+    (self.report_dir / "cut-in-exposures.json").write_text(
+      json.dumps(self.exposure_collector.finish(), indent=2) + "\n", encoding="utf-8")
     self.report_file.close()
     self.report_file = None
     if self._manifest_thread is not None:
@@ -790,10 +820,21 @@ class MotorcycleWeaveScene:
     source_paths = ("openpilot/tools/sim/bridge/carla/scenes/motorcycle_weave.py",
                     "openpilot/tools/sim/bridge/common.py",
                     "openpilot/tools/sim/bridge/carla/carla_world.py",
+                    "openpilot/tools/sim/run_bridge.py",
+                    "openpilot/tools/sim/analyze_motorcycle_weave.py",
+                    "openpilot/tools/sim/analyze_vn_traffic.py",
+                    "openpilot/tools/sim/cut_in_exposure.py",
+                    "openpilot/tools/sim/exposure_matching.py",
+                    "openpilot/tools/sim/planner_trace.py",
+                    "openpilot/tools/sim/model_provenance.py",
+                    "openpilot/selfdrive/controls/plannerd.py",
+                    "openpilot/selfdrive/modeld/modeld.py",
                     "openpilot/selfdrive/controls/lib/longitudinal_planner.py",
                     "openpilot/selfdrive/controls/lib/vn_traffic_policy.py")
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,
                               text=True, check=False, timeout=5)
+    dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", *source_paths],
+                           cwd=root, capture_output=True, text=True, check=False, timeout=10)
     try:
       from openpilot.common.params import Params
       params = Params()
@@ -805,6 +846,7 @@ class MotorcycleWeaveScene:
     manifest = {
       "schema_version": 1,
       "git_commit": revision.stdout.strip() if revision.returncode == 0 else None,
+      "git_dirty_paths": dirty.stdout.splitlines() if dirty.returncode == 0 else None,
       "scene": "motorcycle_weave", "case": self.case, "seed": self.seed,
       "duration_s": self.duration_s, "command_argv": sys.argv,
       "carla_map": getattr(self, "carla_map_name", None),
@@ -875,7 +917,9 @@ class MotorcycleWeaveScene:
                  "actor_id": actor.id, "direction": event.direction,
                  "speed_mps": event.speed_mps, "merge_gap_m": event.merge_gap_m,
                  "entry_s": event.entry_s, "hold_s": event.hold_s, "exit_s": event.exit_s,
-                 "from_staged_background": True})
+                 "from_staged_background": True,
+                 # Promotion retains the moving actor's transform; it is never a front teleport.
+                 "spawn_footprints_clear": True, "front_of_ego_teleport": False})
     return True
 
   def _driving_neighbor(self, waypoint, side):
@@ -965,9 +1009,13 @@ class MotorcycleWeaveScene:
         ego_polygon = [(vertex.x, vertex.y) for vertex in
                        self.ego_vehicle.bounding_box.get_world_vertices(ego_transform)]
         gap_m = polygon_clearance(actor_polygon, ego_polygon)
+      ego_speed = self._ego_speed() if hasattr(self.ego_vehicle, "get_velocity") else None
+      actor_velocity = item["actor"].get_velocity() if hasattr(item["actor"], "get_velocity") else None
+      bike_speed = (math.sqrt(sum(component ** 2 for component in (
+        actor_velocity.x, actor_velocity.y, actor_velocity.z))) if actor_velocity is not None else None)
       self._write({"type": "cut_in_entered_ego_lane", "scene_time_s": elapsed_s,
                    "actor_id": item["actor"].id, "actual_path_distance_m": item["progress_m"],
-                   "actual_gap_m": gap_m})
+                   "actual_gap_m": gap_m, "ego_speed_mps": ego_speed, "bike_speed_mps": bike_speed})
     elif abs(lateral_offset) > 0.6 and item["entered_ego_lane_at"] is not None and item["left_ego_lane_at"] is None:
       item["left_ego_lane_at"] = elapsed_s
       self._write({"type": "cut_in_left_ego_lane", "scene_time_s": elapsed_s,
@@ -1015,4 +1063,6 @@ class MotorcycleWeaveScene:
 
   def _write(self, record):
     if self.report_file is not None:
+      record.setdefault("host_monotonic_ns", time.monotonic_ns())
+      self.exposure_collector.add(record)
       self.report_file.write(record)

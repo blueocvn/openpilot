@@ -3,6 +3,8 @@ import argparse
 import os
 import subprocess
 import sys
+from pathlib import Path
+from uuid import uuid4
 
 from typing import Any
 from multiprocessing import Queue
@@ -62,8 +64,18 @@ def parse_args(add_args=None):
 def should_poll_keyboard(*, joystick, stdin_isatty):
   return not joystick and stdin_isatty
 
+
+def configure_scene_report_path(report_root, environment, *, run_id=None):
+  path = Path(report_root).resolve() / f"motorcycle-weave-{run_id or uuid4().hex}"
+  environment["VN_TRAFFIC_REPORT_PATH"] = str(path)
+  return path
+
+
 if __name__ == "__main__":
   args = parse_args()
+  if args.simulator == "carla" and args.carla_scene == "motorcycle_weave":
+    report_root = args.carla_report_dir or Path(__file__).resolve().parents[3] / ".carla/reports"
+    configure_scene_report_path(report_root, os.environ)
 
   manager = None
   manager_log = None

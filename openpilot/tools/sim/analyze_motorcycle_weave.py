@@ -72,7 +72,7 @@ def match_radar_lead_actor(lead, actors):
                 if actor.get("ego_forward_gap_m") is not None and actor.get("ego_lateral_offset_m") is not None
                 and abs(actor["ego_forward_gap_m"] - lead["distance_m"]) <= 2.0
                 and (lead.get("lateral_m") is None or
-                     abs(abs(actor["ego_lateral_offset_m"]) - abs(lead["lateral_m"])) <= 1.5)]
+                     abs(actor["ego_lateral_offset_m"] - lead["lateral_m"]) <= 1.5)]
   return candidates[0].get("id") if len(candidates) == 1 else None
 
 
