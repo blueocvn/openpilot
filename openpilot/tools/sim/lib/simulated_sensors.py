@@ -1,4 +1,5 @@
 import time
+import os
 
 from openpilot.cereal import log
 import openpilot.cereal.messaging as messaging
@@ -15,7 +16,8 @@ class SimulatedSensors:
   """Simulates the C3 sensors (acc, gyro, gps, peripherals, dm state, cameras) to OpenPilot"""
 
   def __init__(self, dual_camera=False):
-    self.pm = messaging.PubMaster(['accelerometer', 'gyroscope', 'gpsLocationExternal', 'driverStateV2', 'driverMonitoringState', 'peripheralState'])
+    self.pm = messaging.PubMaster(['accelerometer', 'gyroscope', 'gpsLocationExternal', 'driverStateV2', 'driverMonitoringState',
+                                   'peripheralState', 'customReservedRawData0'])
     self.camerad = Camerad(dual_camera=dual_camera)
     self.last_perp_update = 0
     self.last_dmon_update = 0
@@ -79,6 +81,16 @@ class SimulatedSensors:
     }
     self.pm.send('peripheralState', dat)
 
+  def send_radar_message(self, world: 'World'):
+    if os.environ.get('VN_RADAR_CUTIN') != '1' or not hasattr(world, 'read_radar_payload'):
+      return
+    payload = world.read_radar_payload()
+    if payload is None:
+      return
+    dat = messaging.new_message(None, valid=True)
+    dat.customReservedRawData0 = payload
+    self.pm.send('customReservedRawData0', dat)
+
   def send_fake_driver_monitoring(self):
     # dmonitoringmodeld output
     dat = messaging.new_message('driverStateV2')
@@ -131,6 +143,7 @@ class SimulatedSensors:
 
   def update(self, simulator_state: 'SimulatorState', world: 'World'):
     now = time.monotonic()
+    self.send_radar_message(world)
     self.send_imu_message(simulator_state)
     self.send_gps_message(simulator_state)
 

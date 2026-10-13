@@ -59,7 +59,7 @@ class PositiveAccelRamp:
 
   def apply(self, requested_accel: float, *, speed_mps: float, active: bool,
             standstill: bool = False, input_valid: bool = True) -> float:
-    if not active or standstill or not input_valid or not math.isfinite(speed_mps) or not math.isfinite(requested_accel):
+    if not active or not input_valid or not math.isfinite(speed_mps) or not math.isfinite(requested_accel):
       self.reset()
       return requested_accel
     if requested_accel <= 0 or speed_mps >= STOCK_SPEED_MPS:

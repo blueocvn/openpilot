@@ -12,14 +12,18 @@ class TestTrafficManifest(unittest.TestCase):
     with TemporaryDirectory() as directory:
       scene = MotorcycleWeaveScene(object(), object(), object(), [], report_dir=directory,
                                    variant="close_cut_in")
-      with patch.dict(os.environ, {"VN_TRAFFIC_MODE": "1", "VN_TRAFFIC_PROFILE": "gentle"}):
+      with patch.dict(os.environ, {"VN_TRAFFIC_MODE": "1", "VN_TRAFFIC_PROFILE": "gentle", "VN_RADAR_CUTIN": "1"}):
         with patch("openpilot.tools.sim.bridge.carla.scenes.motorcycle_weave.sha256_path", return_value="hash"):
           scene._write_manifest()
       manifest = json.loads((scene.report_dir / "manifest.json").read_text())
       self.assertEqual(manifest["vn_traffic_mode"], "1")
       self.assertEqual(manifest["vn_traffic_profile"], "gentle")
+      self.assertEqual(manifest["vn_radar_cutin"], "1")
+      self.assertEqual(manifest["radar_sensor"]["points_per_second"], 3000)
       self.assertEqual(manifest["scene_variant"], "close_cut_in")
       self.assertIn("openpilot/selfdrive/controls/lib/vn_traffic_policy.py", manifest["source_sha256"])
+      self.assertIn("openpilot/selfdrive/controls/lib/vn_cutin_policy.py", manifest["source_sha256"])
+      self.assertIn("openpilot/selfdrive/controls/lib/longitudinal_mpc_lib/long_mpc.py", manifest["source_sha256"])
       self.assertIn("openpilot/tools/sim/planner_trace.py", manifest["source_sha256"])
       self.assertIn("openpilot/selfdrive/modeld/modeld.py", manifest["source_sha256"])
       self.assertIsInstance(manifest["git_dirty_paths"], list)

@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from openpilot.tools.sim.analyze_motorcycle_weave import iter_report_records, match_radar_lead_actor, summarize_records
+from openpilot.tools.sim.analyze_motorcycle_weave import iter_report_records, match_radar_lead_actor, summarize_records, summarize_report
 from openpilot.tools.sim.bridge.carla.carla_world import startup_steering_angle
 from openpilot.tools.sim.bridge.carla.carla_bridge import scene_cruise_speed
 from openpilot.tools.sim.bridge.carla.scenes import motorcycle_weave as weave
@@ -739,6 +739,109 @@ class TestMotorcycleWeaveSchedule(unittest.TestCase):
       self.assertEqual(summary["minimum_ego_speed_mps"], 6.1)
       self.assertEqual(summary["minimum_requested_accel_mps2"], -0.4)
 
+  def test_summary_preserves_each_cut_in_gap_and_marks_deferred_unverified(self):
+    records = iter((
+      {"type": "ground_truth", "scene_time_s": 0.0, "ego_speed_mps": 8.0, "actors": [], "collisions": []},
+      {"type": "cut_in_started", "scene_time_s": 1.0, "actor_id": 11, "direction": "right_to_left"},
+      {"type": "cut_in_entered_ego_lane", "scene_time_s": 2.0, "actor_id": 11, "actual_gap_m": 2.0},
+      {"type": "cut_in_finished", "scene_time_s": 3.0, "actor_id": 11},
+      {"type": "cut_in_started", "scene_time_s": 4.0, "actor_id": 22, "direction": "left_to_right"},
+      {"type": "cut_in_entered_ego_lane", "scene_time_s": 5.0, "actor_id": 22, "actual_gap_m": 4.0},
+      {"type": "cut_in_deferred", "scene_time_s": 6.0, "direction": "right_to_left"},
+      {"type": "ground_truth", "scene_time_s": 6.0, "ego_speed_mps": 7.0, "actors": [], "collisions": []},
+    ))
+    summary = summarize_records(records)
+    self.assertEqual(summary["entry_gap_m"], 2.0)
+    self.assertEqual([event["entry_gap_m"] for event in summary["cut_ins"]], [2.0, 4.0])
+    self.assertEqual([event["verified"] for event in summary["cut_ins"]], [True, False])
+    self.assertEqual(summary["deferred_cut_in_count"], 1)
+
+  def test_control_cases_do_not_schedule_cutins(self):
+    for case in ("empty_road", "adjacent_only", "steady_lead"):
+      scene = MotorcycleWeaveScene(object(), object(), object(), [], case=case,
+                                   variant="close_cut_in")
+      scene.ready_time_s = 0.0
+      scene.start_time_s = 0.0
+      scene.latest_openpilot = {"active": True, "long_active": True}
+      scene._update_background = Mock()
+      scene._candidate_lanes = Mock(return_value=(object(), object(), object(), 100.0))
+      scene._ego_speed = Mock(return_value=8.33)
+      scene._maintain_background = Mock()
+      scene._maintain_steady_lead = Mock()
+      scene.before_tick(1.0)
+      self.assertIsNone(scene.scheduler)
+      if case == "empty_road":
+        scene._candidate_lanes.assert_not_called()
+        scene._maintain_background.assert_not_called()
+      elif case == "adjacent_only":
+        scene._maintain_background.assert_called_once()
+        scene._maintain_steady_lead.assert_not_called()
+      else:
+        scene._maintain_background.assert_not_called()
+        scene._maintain_steady_lead.assert_called_once()
+
+  def test_steady_lead_control_spawns_one_actor_ahead_and_reuses_it(self):
+    transform = SimpleNamespace(location=SimpleNamespace(x=35.0, y=0.0, z=0.0),
+                                rotation=SimpleNamespace(yaw=0.0),
+                                get_forward_vector=lambda: SimpleNamespace(x=1.0, y=0.0))
+    actor = SimpleNamespace(id=91, set_target_velocity=Mock(), is_alive=True)
+    world = SimpleNamespace(get_blueprint_library=lambda: SimpleNamespace(find=lambda _: object()),
+                            try_spawn_actor=Mock(return_value=actor))
+    sink = []
+    carla = SimpleNamespace(Vector3D=lambda **kwargs: kwargs)
+    scene = MotorcycleWeaveScene(carla, world, object(), sink, case="steady_lead",
+                                 variant="close_cut_in")
+    scene._advance = Mock(return_value=SimpleNamespace(transform=transform))
+    scene._steady_lead_spawn_clear = Mock(return_value=True)
+    scene._write = Mock()
+    scene._maintain_steady_lead(1.0, object())
+    scene._maintain_steady_lead(2.0, object())
+    self.assertEqual(world.try_spawn_actor.call_count, 1)
+    self.assertEqual(sink, [actor])
+    self.assertEqual(scene._steady_lead["speed_mps"], 7.0)
+    actor.set_target_velocity.assert_called_once()
+
+  def test_report_joins_planner_confirmation_and_deceleration_to_each_cutin(self):
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      with RotatingReport(root, max_bytes=250) as scene:
+        scene.write({"type": "ground_truth", "scene_time_s": 0.0, "ego_speed_mps": 8.0, "actors": [], "collisions": []})
+        scene.write({"type": "cut_in_started", "scene_time_s": 1.0, "host_monotonic_ns": 1_000_000_000,
+                     "actor_id": 11, "direction": "right_to_left"})
+        scene.write({"type": "cut_in_entered_ego_lane", "scene_time_s": 2.0,
+                     "host_monotonic_ns": 2_000_000_000, "actor_id": 11, "actual_gap_m": 3.0})
+        scene.write({"type": "cut_in_finished", "scene_time_s": 3.0,
+                     "host_monotonic_ns": 3_000_000_000, "actor_id": 11})
+        scene.write({"type": "ground_truth", "scene_time_s": 3.0, "ego_speed_mps": 7.0, "actors": [], "collisions": []})
+      with RotatingReport(root / "planner", max_bytes=250) as planner:
+        planner.write({"type": "planner_output", "tick_time_ns": 1_500_000_000,
+                       "a_target_mps2": -0.8, "mpc_source": "3",
+                       "cut_in": {"stage": "confirmed", "side": "right_to_left"}})
+      result = summarize_report(root)
+      event = result["cut_ins"][0]
+      self.assertEqual(event["model_confirmed_before_entry_s"], 0.5)
+      self.assertEqual(event["mpc_cutin_before_entry_s"], 0.5)
+      self.assertEqual(event["mpc_source_attribution"], "lowest_mpc_margin_not_causal_proof")
+      self.assertEqual(event["planner_decel_before_entry_s"], 0.5)
+
+  def test_report_does_not_attribute_opposite_side_model_hypothesis_to_cutin(self):
+    with TemporaryDirectory() as directory:
+      root = Path(directory)
+      with RotatingReport(root) as scene:
+        scene.write({"type": "ground_truth", "scene_time_s": 0.0, "ego_speed_mps": 8.0, "actors": [], "collisions": []})
+        scene.write({"type": "cut_in_started", "scene_time_s": 1.0,
+                     "host_monotonic_ns": 1_000_000_000, "actor_id": 11, "direction": "left_to_right"})
+        scene.write({"type": "cut_in_entered_ego_lane", "scene_time_s": 2.0,
+                     "host_monotonic_ns": 2_000_000_000, "actor_id": 11, "actual_gap_m": 3.0})
+      with RotatingReport(root / "planner") as planner:
+        planner.write({"type": "planner_output", "tick_time_ns": 1_500_000_000,
+                       "a_target_mps2": -0.8, "mpc_source": "3",
+                       "cut_in": {"stage": "confirmed", "side": "right_to_left"}})
+      event = summarize_report(root)["cut_ins"][0]
+      self.assertIsNone(event["model_confirmed_before_entry_s"])
+      self.assertIsNone(event["mpc_cutin_before_entry_s"])
+      self.assertEqual(event["opposite_side_confirmation_count"], 1)
+
   def test_startup_lane_follow_steering_handles_heading_and_wraparound(self):
     """Catches a delayed openpilot startup sending the rolling ego straight off a curved lane."""
     self.assertEqual(startup_steering_angle(current_yaw_deg=0.0, target_yaw_deg=5.0), -40.0)
@@ -974,6 +1077,7 @@ class TestMotorcycleWeaveSchedule(unittest.TestCase):
                                     actor_half_length_m=1.0)
     self.assertEqual(result["id"], 7)
     self.assertEqual(result["ego_forward_gap_m"], 7.0)
+    self.assertEqual(result["bumper_gap_m"], 7.0)
     self.assertEqual(result["ego_lateral_offset_m"], -3.0)
 
   def test_actor_tracking_gate_uses_lateral_error_not_longitudinal_lag(self):

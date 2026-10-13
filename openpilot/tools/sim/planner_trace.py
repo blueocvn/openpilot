@@ -1,10 +1,12 @@
 """Simulation-only snapshots of the exact SubMaster state consumed by plannerd."""
 
 import argparse
+import base64
 import hashlib
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 from types import ModuleType
@@ -12,6 +14,19 @@ from unittest.mock import patch
 
 from openpilot.tools.sim.analyze_motorcycle_weave import iter_report_records
 from openpilot.tools.sim.bridge.carla.scenes.report import RotatingReport
+from openpilot.tools.sim.lib.carla_radar import MAX_PAYLOAD_BYTES
+
+
+RADAR_SERVICE = "customReservedRawData0"
+
+
+def _serialize_service(sm, service):
+  if service == RADAR_SERVICE:
+    payload = bytes(sm[service])
+    if len(payload) > MAX_PAYLOAD_BYTES:
+      raise ValueError("radar trace payload too large")
+    return {"encoding": "base64", "payload": base64.b64encode(payload).decode("ascii")}
+  return sm[service].to_dict()
 
 
 class PlannerTraceRecorder:
@@ -32,7 +47,7 @@ class PlannerTraceRecorder:
       "valid": {service: bool(sm.valid[service]) for service in services},
       "freq_ok": {service: bool(sm.freq_ok[service]) for service in services},
       "log_mono_time_ns": {service: int(sm.logMonoTime[service]) for service in services},
-      "data": {service: sm[service].to_dict() for service in services},
+      "data": {service: _serialize_service(sm, service) for service in services},
     })
     self.sequence += 1
 
@@ -42,6 +57,9 @@ class PlannerTraceRecorder:
       "a_target_mps2": float(planner.output_a_target),
       "mpc_source": str(planner.mpc.source),
       "traffic_follow": dict(planner.traffic_follow.diagnostic),
+      "cut_in": dict(planner.cut_in_predictor.diagnostic) if hasattr(planner, "cut_in_predictor") else None,
+      "radar_cut_in": dict(planner.radar_cut_in_predictor.diagnostic) if hasattr(planner, "radar_cut_in_predictor") else None,
+      "cut_in_source": getattr(planner, "cut_in_source", None),
     })
 
   def close(self):
@@ -54,6 +72,7 @@ class ReplayMaster:
 
     self.services = tuple(snapshot["data"])
     self.frame = snapshot["frame"]
+    self.tick_time_ns = snapshot.get("tick_time_ns")
     self.updated = snapshot["updated"]
     self.alive = snapshot["alive"]
     self.valid = snapshot["valid"]
@@ -62,6 +81,14 @@ class ReplayMaster:
     self._all_checks = snapshot["all_checks"]
     self.data = {}
     for service, value in snapshot["data"].items():
+      if service == RADAR_SERVICE:
+        if value.get("encoding") != "base64":
+          raise ValueError("unsupported radar trace encoding")
+        payload = base64.b64decode(value["payload"], validate=True)
+        if len(payload) > MAX_PAYLOAD_BYTES:
+          raise ValueError("radar trace payload too large")
+        self.data[service] = payload
+        continue
       message = messaging.new_message(service)
       field = getattr(message, service)
       field.from_dict(value)
@@ -119,6 +146,7 @@ def parity_report_valid(report_dir: Path):
     return False
   health = trace_health(report_dir)
   return (result.get("mode_zero_parity_verified") is True and
+          result.get("mpc_implementation_compared") is True and
           health["planner_trace_valid"] and
           result.get("ticks_compared") == health["planner_trace_sample_count"] and
           result.get("trace_hashes") == trace_hashes(report_dir))
@@ -131,7 +159,8 @@ def replay_mode_zero(report_dir: Path, stock_ref: str):
   from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
 
   health = trace_health(report_dir)
-  result = {"mode_zero_parity_verified": False, "ticks_compared": 0,
+  result = {"mode_zero_parity_verified": False, "mpc_implementation_compared": False,
+            "ticks_compared": 0,
             "stock_ref": stock_ref, "trace_hashes": trace_hashes(report_dir)}
   if not health["planner_trace_valid"]:
     result["reason"] = "planner trace incomplete"
@@ -139,11 +168,22 @@ def replay_mode_zero(report_dir: Path, stock_ref: str):
 
   root = Path(__file__).resolve().parents[3]
   source_path = "openpilot/selfdrive/controls/lib/longitudinal_planner.py"
+  mpc_path = "openpilot/selfdrive/controls/lib/longitudinal_mpc_lib/long_mpc.py"
+  mpc_import = "openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc"
+  old_mpc_source = subprocess.run(["git", "show", f"{stock_ref}:{mpc_path}"], cwd=root,
+                                  text=True, capture_output=True, check=True).stdout
+  old_mpc = ModuleType("phase1_stock_long_mpc")
+  old_mpc.__file__ = mpc_path
+  exec(compile(old_mpc_source, mpc_path, "exec"), old_mpc.__dict__)
+  result["stock_mpc_sha256"] = hashlib.sha256(old_mpc_source.encode()).hexdigest()
+  result["candidate_mpc_sha256"] = hashlib.sha256((root / mpc_path).read_bytes()).hexdigest()
   source = subprocess.run(["git", "show", f"{stock_ref}:{source_path}"], cwd=root,
                           text=True, capture_output=True, check=True).stdout
   stock_module = ModuleType("phase1_stock_longitudinal_planner")
   stock_module.__file__ = source_path
-  exec(compile(source, source_path, "exec"), stock_module.__dict__)
+  with patch.dict(sys.modules, {mpc_import: old_mpc}):
+    exec(compile(source, source_path, "exec"), stock_module.__dict__)
+  result["mpc_implementation_compared"] = True
 
   records = iter_report_records(Path(report_dir) / "planner")
   header = next(records)
@@ -165,6 +205,12 @@ def replay_mode_zero(report_dir: Path, stock_ref: str):
     if (not np.isclose(stock.output_a_target, candidate.output_a_target, atol=1e-6) or
         stock.output_should_stop != candidate.output_should_stop or
         stock.mpc.source != candidate.mpc.source or
+        stock.fcw != candidate.fcw or
+        stock.allow_throttle != candidate.allow_throttle or
+        not np.allclose(stock.mpc.params, candidate.mpc.params, atol=1e-6) or
+        not np.allclose(stock.mpc.x_sol, candidate.mpc.x_sol, atol=1e-6) or
+        not np.allclose(stock.mpc.u_sol, candidate.mpc.u_sol, atol=1e-6) or
+        not np.allclose(stock.j_desired_trajectory, candidate.j_desired_trajectory, atol=1e-6) or
         not np.allclose(stock.a_desired_trajectory, candidate.a_desired_trajectory, atol=1e-6) or
         not np.allclose(stock.v_desired_trajectory, candidate.v_desired_trajectory, atol=1e-6)):
       result["reason"] = f"planner output differs at sequence {record['sequence']}"
@@ -176,7 +222,7 @@ def replay_mode_zero(report_dir: Path, stock_ref: str):
 def main():
   parser = argparse.ArgumentParser(description="Verify Phase 2 mode 0 against Phase 1 planner on recorded inputs")
   parser.add_argument("report_dir", type=Path)
-  parser.add_argument("--stock-ref", default="8ad43259c8ccbba082a15661a399c8dd0018194c")
+  parser.add_argument("--stock-ref", default="6a125380ac8e3b261ed1feb60a9eb8d6d84e18a5")
   args = parser.parse_args()
   result = replay_mode_zero(args.report_dir, args.stock_ref)
   (args.report_dir / "planner-parity.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

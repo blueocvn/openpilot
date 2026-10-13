@@ -44,12 +44,19 @@ class CarlaWorld(World):
     self.status_q = status_q
     self.actors = []
     self.camera_queues = {}
+    self.radar_queue = queue.Queue(maxsize=4)
+    self.last_radar_frame = -1
+    self.pending_radar = None
+    self.radar_enabled = os.environ.get("VN_RADAR_CUTIN") == "1"
+    from openpilot.tools.sim.lib.carla_radar import RADAR_MOUNT_X_M
+    self.radar_mount_x_m = RADAR_MOUNT_X_M
     self.latest_gnss = None
     self.latest_imu = None
     self.current_frame = None
     self.closed = False
     self.scene = None
     self.scene_sm = None
+    self.radar_report = None
 
     self.status_q.put(QueueMessage(QueueMessageType.START_STATUS, f"connecting to CARLA at {host}:{port}"))
     self.client = carla.Client(host, port)
@@ -113,6 +120,9 @@ class CarlaWorld(World):
         "carState", "carControl", "carOutput", "selfdriveState", "longitudinalPlan", "modelV2", "radarState",
         "onroadEvents",
       ])
+      if self.radar_enabled:
+        from openpilot.tools.sim.bridge.carla.scenes.report import RotatingReport
+        self.radar_report = RotatingReport(self.scene.report_dir / "radar")
     # Axle offsets are fixed for the rigid body, so resolve them once at spawn.
     self._front_axle, self._rear_axle = self._axle_offsets()
     # CARLA renders debug shapes into the RGB sensors as well as the spectator
@@ -135,6 +145,8 @@ class CarlaWorld(World):
       self._spawn_camera("wide", 119.07, high_quality)
     self._spawn_gnss()
     self._spawn_imu()
+    if self.radar_enabled:
+      self._spawn_radar()
     self._update_spectator()
 
     self.status_q.put(QueueMessage(QueueMessageType.START_STATUS, "started"))
@@ -282,6 +294,49 @@ class CarlaWorld(World):
     sensor = self.world.spawn_actor(bp, self._sensor_transform(), attach_to=self.vehicle)
     sensor.listen(lambda event: setattr(self, "latest_imu", event))
     self.actors.append(sensor)
+
+  def _spawn_radar(self):
+    from openpilot.tools.sim.lib.carla_radar import RADAR_MOUNT_Z_M, RADAR_SENSOR_ATTRIBUTES
+    bp = self.world.get_blueprint_library().find("sensor.other.radar")
+    for key, value in RADAR_SENSOR_ATTRIBUTES.items():
+      bp.set_attribute(key, str(value))
+    mount = self.carla.Transform(self.carla.Location(x=self.radar_mount_x_m, z=RADAR_MOUNT_Z_M))
+    sensor = self.world.spawn_actor(bp, mount, attach_to=self.vehicle)
+    sensor.listen(lambda measurement: self._put_latest(self.radar_queue, (measurement, time.monotonic_ns())))
+    self.actors.append(sensor)
+
+  def read_radar_payload(self):
+    if self.pending_radar is None:
+      try:
+        self.pending_radar = self.radar_queue.get_nowait()
+      except queue.Empty:
+        return None
+    while True:
+      try:
+        next_measurement = self.radar_queue.get_nowait()
+      except queue.Empty:
+        break
+      if next_measurement[0].frame <= self.current_frame:
+        self.pending_radar = next_measurement
+      else:
+        # Keep a future frame for the next simulation tick.
+        self._put_latest(self.radar_queue, next_measurement)
+        break
+    measurement, timestamp_ns = self.pending_radar
+    if measurement.frame > self.current_frame or measurement.frame <= self.last_radar_frame:
+      return None
+    self.pending_radar = None
+    self.last_radar_frame = measurement.frame
+    from openpilot.tools.sim.lib.carla_radar import measurement_payload
+    payload = measurement_payload(measurement, timestamp_ns=timestamp_ns, mount_x_m=self.radar_mount_x_m)
+    if self.radar_report is not None:
+      from openpilot.tools.sim.lib.carla_radar import decode_radar
+      frame = decode_radar(payload)
+      self.radar_report.write({"type": "radar_frame", "frame": frame.frame,
+                               "timestamp_ns": frame.timestamp_ns, "sim_time_s": frame.sim_time_s,
+                               "points": frame.points,
+                               "truncated": frame.truncated})
+    return payload
 
   def apply_controls(self, steer_angle, throttle_out, brake_out):
     steer = -float(steer_angle) / max(self.max_wheel_angle * self.steer_ratio, 1.0)
@@ -500,6 +555,8 @@ class CarlaWorld(World):
     self.exit_event.set()
     if self.scene is not None:
       self.scene.close(self._simulation_time())
+    if self.radar_report is not None:
+      self.radar_report.close()
     for actor in reversed(self.actors):
       if actor.is_alive:
         if hasattr(actor, "stop"):

@@ -183,6 +183,8 @@ def summarize_records(records):
   control_sample_count = 0
   high_rate_controls = False
   active_event = None
+  cut_ins = []
+  deferred_cut_in_count = 0
   cut_ins_with_lead = 0
   cut_ins_with_brake = 0
   cut_ins_with_collision = 0
@@ -208,20 +210,34 @@ def summarize_records(records):
         first_cut_in_time = record["scene_time_s"]
         evaluation = _Evaluation()
       active_event = {"actor_id": record.get("actor_id"), "lead": False, "matched_lead": False,
-                      "brake": False, "collision": False}
+                      "brake": False, "collision": False, "direction": record.get("direction"),
+                      "start_s": record["scene_time_s"], "entry_s": None, "entry_gap_m": None,
+                      "host_start_ns": record.get("host_monotonic_ns"), "host_entry_ns": None,
+                      "first_requested_decel_s": None, "first_actual_brake_s": None,
+                      "verified": False}
+      cut_ins.append(active_event)
     elif record.get("type") == "cut_in_entered_ego_lane":
       cut_in_entered_count += 1
-      entry_gap_m = record.get("actual_gap_m")
-      entry_closing_speed_mps = record.get("closing_speed_mps")
-      entry_ttc_s = record.get("entry_ttc_s")
+      if entry_gap_m is None:
+        entry_gap_m = record.get("actual_gap_m")
+        entry_closing_speed_mps = record.get("closing_speed_mps")
+        entry_ttc_s = record.get("entry_ttc_s")
+      if active_event is not None and record.get("actor_id") == active_event["actor_id"]:
+        active_event["entry_s"] = record["scene_time_s"]
+        active_event["entry_gap_m"] = record.get("actual_gap_m")
+        active_event["host_entry_ns"] = record.get("host_monotonic_ns")
     elif record.get("type") == "cut_in_finished":
       completed_cut_ins += 1
       if active_event is not None and record.get("actor_id") == active_event["actor_id"]:
+        active_event["verified"] = active_event["entry_s"] is not None
+        active_event["finish_s"] = record["scene_time_s"]
         cut_ins_with_lead += active_event["lead"]
         cut_ins_with_matched_lead += active_event["matched_lead"]
         cut_ins_with_brake += active_event["brake"]
         cut_ins_with_collision += active_event["collision"]
         active_event = None
+    elif record.get("type") == "cut_in_deferred":
+      deferred_cut_in_count += 1
     elif record.get("type") == "collision":
       collision_event_count += 1
       if first_collision_s is None:
@@ -243,6 +259,11 @@ def summarize_records(records):
         if active_event is not None:
           active_event["lead"] |= bool(record.get("openpilot", {}).get("plan_has_lead", False))
           active_event["brake"] |= record.get("ego_brake", 0.0) > 0.05
+          if (active_event["first_requested_decel_s"] is None and
+              record.get("openpilot", {}).get("requested_accel_mps2", 0.0) < -0.1):
+            active_event["first_requested_decel_s"] = record["scene_time_s"]
+          if active_event["first_actual_brake_s"] is None and record.get("ego_brake", 0.0) > 0.05:
+            active_event["first_actual_brake_s"] = record["scene_time_s"]
     elif record.get("type") == "ground_truth":
       sample_count += 1
       timestamp = record["scene_time_s"]
@@ -294,6 +315,8 @@ def summarize_records(records):
     "active_cut_in_contact_count": len(active_cut_in_contact_ids),
     "other_contact_count": len(other_contact_ids),
     "entry_gap_m": entry_gap_m,
+    "cut_ins": cut_ins,
+    "deferred_cut_in_count": deferred_cut_in_count,
     "entry_closing_speed_mps": entry_closing_speed_mps,
     "entry_ttc_s": entry_ttc_s,
     "completed_cut_in_count": completed_cut_ins,
@@ -307,13 +330,60 @@ def summarize_records(records):
   }
 
 
+def summarize_report(report_dir):
+  """Join each cut-in with planner evidence on the shared host monotonic clock."""
+  report_dir = Path(report_dir)
+  summary = summarize_records(iter_report_records(report_dir))
+  planner_dir = report_dir / "planner"
+  summary["planner_evidence_available"] = planner_dir.is_dir()
+  for event in summary["cut_ins"]:
+    event.update({"model_confirmed_before_entry_s": None,
+                  "mpc_cutin_before_entry_s": None,
+                  "planner_decel_before_entry_s": None,
+                  "opposite_side_confirmation_count": 0,
+                  "model_confirmation_attribution": None,
+                  "mpc_source_attribution": None,
+                  "planner_rejections": {}})
+  if not planner_dir.is_dir():
+    return summary
+  for record in iter_report_records(planner_dir):
+    if record.get("type") != "planner_output":
+      continue
+    tick_ns = record.get("tick_time_ns")
+    if tick_ns is None:
+      continue
+    for event in summary["cut_ins"]:
+      start_ns, entry_ns = event["host_start_ns"], event["host_entry_ns"]
+      if start_ns is None or entry_ns is None or not start_ns <= tick_ns <= entry_ns:
+        continue
+      seconds_before_entry = (entry_ns - tick_ns) / 1e9
+      diagnostic = record.get("cut_in") or {}
+      reason = diagnostic.get("reason")
+      if reason:
+        event["planner_rejections"][reason] = event["planner_rejections"].get(reason, 0) + 1
+      same_side = diagnostic.get("side") == event["direction"]
+      if diagnostic.get("stage") == "confirmed" and not same_side:
+        event["opposite_side_confirmation_count"] += 1
+      if diagnostic.get("stage") == "confirmed" and same_side and event["model_confirmed_before_entry_s"] is None:
+        event["model_confirmed_before_entry_s"] = seconds_before_entry
+        event["model_confirmation_attribution"] = "side_compatible_not_actor_proven"
+      if (same_side and str(record.get("mpc_source")) in ("3", "lead2") and
+          event["mpc_cutin_before_entry_s"] is None):
+        event["mpc_cutin_before_entry_s"] = seconds_before_entry
+        event["mpc_source_attribution"] = "lowest_mpc_margin_not_causal_proof"
+      accel = record.get("a_target_mps2")
+      if accel is not None and accel < -0.1 and event["planner_decel_before_entry_s"] is None:
+        event["planner_decel_before_entry_s"] = seconds_before_entry
+  return summary
+
+
 def main():
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("report", type=Path, help="events.jsonl or its containing report directory")
   args = parser.parse_args()
 
   report_path = args.report / "events.jsonl" if args.report.is_dir() else args.report
-  summary = summarize_records(iter_report_records(args.report))
+  summary = summarize_report(args.report) if args.report.is_dir() else summarize_records(iter_report_records(args.report))
   output_path = report_path.with_name("summary.json")
   output_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
   print(json.dumps(summary, indent=2))

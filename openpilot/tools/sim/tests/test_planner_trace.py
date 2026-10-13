@@ -8,7 +8,7 @@ from openpilot.tools.sim.analyze_motorcycle_weave import iter_report_records
 from openpilot.tools.sim.bridge.carla.scenes.motorcycle_weave import MotorcycleWeaveScene
 from openpilot.tools.sim.planner_trace import PlannerTraceRecorder, ReplayMaster, parity_report_valid, replay_mode_zero, trace_health
 from openpilot.tools.sim.run_bridge import configure_scene_report_path
-from openpilot.selfdrive.controls.plannerd import update_with_observer
+from openpilot.selfdrive.controls.plannerd import planner_input_services, update_with_observer
 
 
 class _Field:
@@ -36,14 +36,42 @@ class _Master:
 
 
 class TestPlannerTrace(unittest.TestCase):
+  def test_plannerd_optional_radar_subscription_is_simulation_only(self):
+    self.assertNotIn("customReservedRawData0", planner_input_services(simulation=False, radar_enabled=True))
+    self.assertNotIn("customReservedRawData0", planner_input_services(simulation=True, radar_enabled=False))
+    self.assertIn("customReservedRawData0", planner_input_services(simulation=True, radar_enabled=True))
+
+  def test_optional_binary_radar_input_roundtrips_through_rotated_trace(self):
+    class RadarMaster(_Master):
+      services = ("carState", "customReservedRawData0")
+      updated = dict.fromkeys(services, True)
+      alive = dict.fromkeys(services, True)
+      valid = dict.fromkeys(services, True)
+      freq_ok = dict.fromkeys(services, True)
+      logMonoTime = dict.fromkeys(services, 123)
+
+      def __getitem__(self, service):
+        return b"\x00\x01radar" if service == "customReservedRawData0" else _Field(8.3)
+
+    with TemporaryDirectory() as directory:
+      recorder = PlannerTraceRecorder(Path(directory), {}, max_bytes=350)
+      recorder.record(RadarMaster(), tick_time_ns=1000)
+      recorder.close()
+      snapshot = next(record for record in iter_report_records(Path(directory) / "planner")
+                      if record["type"] == "planner_input")
+      self.assertEqual(snapshot["data"]["customReservedRawData0"]["encoding"], "base64")
+      replay = ReplayMaster(snapshot)
+      self.assertEqual(bytes(replay["customReservedRawData0"]), b"\x00\x01radar")
+
   def test_replay_master_restores_capnp_values_and_status(self):
-    snapshot = {"frame": 9, "all_checks": False, "data": {"carState": {"vEgo": 8.3}},
+    snapshot = {"frame": 9, "tick_time_ns": 1000, "all_checks": False, "data": {"carState": {"vEgo": 8.3}},
                 "updated": {"carState": True}, "alive": {"carState": False},
                 "valid": {"carState": True}, "freq_ok": {"carState": True},
                 "log_mono_time_ns": {"carState": 123}}
     master = ReplayMaster(snapshot)
     self.assertAlmostEqual(master["carState"].vEgo, 8.3, places=5)
     self.assertEqual(master.logMonoTime["carState"], 123)
+    self.assertEqual(master.tick_time_ns, 1000)
     self.assertFalse(master.all_checks())
     self.assertFalse(master.alive["carState"])
 
@@ -112,6 +140,26 @@ class TestPlannerTrace(unittest.TestCase):
       self.assertEqual(output["traffic_follow"]["stage"], "closing_lead")
       self.assertAlmostEqual(output["traffic_follow"]["t_follow_s"], 1.48)
 
+  def test_records_cutin_diagnostic_per_planner_output(self):
+    class Planner:
+      output_a_target = -0.8
+      mpc = type("Mpc", (), {"source": "lead2"})()
+      traffic_follow = type("Follow", (), {"diagnostic": {"stage": "threat_cleared"}})()
+      cut_in_predictor = type("Cutin", (), {"diagnostic": {
+        "stage": "confirmed", "side": "right_to_left", "probability": 0.75,
+        "entry_time_s": 0.8, "distance_used_m": 12.0,
+      }})()
+
+    with TemporaryDirectory() as directory:
+      recorder = PlannerTraceRecorder(Path(directory), {})
+      recorder.record(_Master(), tick_time_ns=1000)
+      recorder.record_output(Planner())
+      recorder.close()
+      output = next(record for record in iter_report_records(Path(directory) / "planner")
+                    if record["type"] == "planner_output")
+      self.assertEqual(output["cut_in"]["side"], "right_to_left")
+      self.assertEqual(output["cut_in"]["distance_used_m"], 12.0)
+
   def test_missing_planner_tick_invalidates_trace(self):
     with TemporaryDirectory() as directory:
       recorder = PlannerTraceRecorder(Path(directory), {}, max_bytes=1000)
@@ -160,6 +208,8 @@ class TestPlannerTrace(unittest.TestCase):
       recorder.close()
       result = replay_mode_zero(Path(directory), "8ad43259c8ccbba082a15661a399c8dd0018194c")
       self.assertTrue(result["mode_zero_parity_verified"], result)
+      self.assertTrue(result["mpc_implementation_compared"])
+      self.assertNotEqual(result["stock_mpc_sha256"], "")
       self.assertEqual(result["ticks_compared"], 2)
       (Path(directory) / "planner-parity.json").write_text(json.dumps(result))
       self.assertTrue(parity_report_valid(Path(directory)))

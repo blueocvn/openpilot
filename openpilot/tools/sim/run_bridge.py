@@ -49,7 +49,8 @@ def parse_args(add_args=None):
   parser.add_argument('--carla-town', default='Town04_Opt')
   parser.add_argument('--carla-spawn-point', type=int, default=40)
   parser.add_argument('--carla-scene', choices=('none', 'motorcycle_weave'), default='none')
-  parser.add_argument('--carla-scene-case', choices=('right_to_left', 'left_to_right', 'alternating'),
+  parser.add_argument('--carla-scene-case', choices=('right_to_left', 'left_to_right', 'alternating',
+                                                    'empty_road', 'adjacent_only', 'steady_lead'),
                       default='alternating')
   parser.add_argument('--carla-scene-variant', choices=CARLA_SCENE_VARIANTS, default='standard')
   parser.add_argument('--carla-scene-seed', type=int, default=42)

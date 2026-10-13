@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import math
 import os
+import time
 import numpy as np
 
 import openpilot.cereal.messaging as messaging
@@ -14,6 +15,9 @@ from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import get_T
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_accel_from_plan, should_stop
 from openpilot.selfdrive.controls.lib.vn_traffic_policy import PositiveAccelRamp, TrafficFollowPolicy, TrafficModeConfig
+from openpilot.selfdrive.controls.lib.vn_cutin_policy import CutInPredictor
+from openpilot.selfdrive.controls.lib.vn_radar_cutin_policy import RadarCutInPredictor
+from openpilot.tools.sim.lib.carla_radar import decode_radar
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.common.swaglog import cloudlog
 
@@ -62,6 +66,10 @@ class LongitudinalPlanner:
     self.traffic_simulation = os.environ.get("SIMULATION") == "1"
     self.traffic_ramp = PositiveAccelRamp(self.traffic_mode.profile, dt)
     self.traffic_follow = TrafficFollowPolicy(dt)
+    self.cut_in_predictor = CutInPredictor()
+    self.radar_cut_in_predictor = RadarCutInPredictor()
+    self.radar_cut_in_enabled = self.traffic_simulation and os.environ.get("VN_RADAR_CUTIN") == "1"
+    self.cut_in_source = None
     self.mpc = LongitudinalMpc(dt=dt)
     self.fcw = False
     self.dt = dt
@@ -130,10 +138,51 @@ class LongitudinalPlanner:
       active=traffic_active, radar_valid=radar_valid,
     )
 
+    cut_in_obstacle = None
+    self.cut_in_source = None
+    if traffic_active:
+      model_time_ns = sm.logMonoTime.get("modelV2", 0) if hasattr(sm, "logMonoTime") else 0
+      tick_time_ns = getattr(sm, "tick_time_ns", None)
+      now_ns = tick_time_ns if tick_time_ns is not None else time.monotonic_ns()
+      model_valid = sm.all_checks(["modelV2"]) if hasattr(sm, "all_checks") else True
+      model_fresh = bool(sm.updated.get("modelV2", False)) if hasattr(sm, "updated") else False
+      self.cut_in_predictor.update(sm['modelV2'], ego_speed_mps=v_ego,
+                                   model_time_ns=model_time_ns, now_ns=now_ns,
+                                   fresh=model_fresh, active=model_valid)
+      cut_in_obstacle = self.cut_in_predictor.obstacle(T_IDXS_MPC)
+      if cut_in_obstacle is not None:
+        self.cut_in_source = "model"
+      if self.radar_cut_in_enabled:
+        radar_service = "customReservedRawData0"
+        radar_fresh = bool(sm.updated.get(radar_service, False)) if hasattr(sm, "updated") else False
+        radar_input_valid = sm.all_checks([radar_service]) if radar_fresh and hasattr(sm, "all_checks") else radar_fresh
+        frame = decode_radar(bytes(sm[radar_service])) if radar_input_valid else None
+        self.radar_cut_in_predictor.update(frame, sm['modelV2'], ego_speed_mps=v_ego,
+                                           now_ns=now_ns, active=radar_input_valid)
+        radar_obstacle = self.radar_cut_in_predictor.obstacle(T_IDXS_MPC)
+        if radar_obstacle is not None:
+          if cut_in_obstacle is None:
+            cut_in_obstacle = radar_obstacle
+            self.cut_in_source = "radar"
+          else:
+            self.cut_in_source = "radar+model"
+            cut_in_obstacle = np.minimum(cut_in_obstacle, radar_obstacle)
+      else:
+        self.radar_cut_in_predictor.update(None, sm['modelV2'], ego_speed_mps=v_ego,
+                                           now_ns=now_ns, active=False)
+    else:
+      self.cut_in_predictor.update(None, ego_speed_mps=v_ego, model_time_ns=0,
+                                   now_ns=0, fresh=False, active=False)
+      self.radar_cut_in_predictor.update(None, sm['modelV2'], ego_speed_mps=v_ego,
+                                         now_ns=0, active=False)
+
     self.mpc.set_weights(prev_accel_constraint, personality=sm['selfdriveState'].personality)
     self.mpc.set_cur_state(self.v_desired_filter.x, self.output_a_target)
-    self.mpc.update(sm['radarState'], personality=sm['selfdriveState'].personality,
-                    t_follow_override=t_follow if traffic_active else None)
+    if traffic_active:
+      self.mpc.update(sm['radarState'], personality=sm['selfdriveState'].personality,
+                      t_follow_override=t_follow, cut_in_obstacle=cut_in_obstacle)
+    else:
+      self.mpc.update(sm['radarState'], personality=sm['selfdriveState'].personality)
 
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
     self.a_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)

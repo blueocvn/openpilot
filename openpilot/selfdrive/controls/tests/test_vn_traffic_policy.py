@@ -38,13 +38,14 @@ class TestPositiveAccelRamp(unittest.TestCase):
     self.assertAlmostEqual(ramp.apply(1.0, speed_mps=8.0, active=True), 0.06)
     self.assertEqual(ramp.apply(0.0, speed_mps=8.0, active=True), 0.0)
 
-  def test_disengage_and_standstill_reset_without_modifying_stock_output(self):
+  def test_disengage_resets_but_active_standstill_uses_the_startup_ramp(self):
     ramp = PositiveAccelRamp("responsive", dt=0.1)
     self.assertAlmostEqual(ramp.apply(1.0, speed_mps=8.0, active=True), 0.1)
     self.assertEqual(ramp.apply(1.0, speed_mps=8.0, active=False), 1.0)
     self.assertAlmostEqual(ramp.apply(1.0, speed_mps=8.0, active=True), 0.1)
-    self.assertEqual(ramp.apply(1.0, speed_mps=0.0, active=True, standstill=True), 1.0)
-    self.assertAlmostEqual(ramp.apply(1.0, speed_mps=8.0, active=True), 0.1)
+    ramp.reset()
+    self.assertAlmostEqual(ramp.apply(1.0, speed_mps=0.0, active=True, standstill=True), 0.1)
+    self.assertAlmostEqual(ramp.apply(1.0, speed_mps=0.2, active=True), 0.2)
 
   def test_speed_fade_and_invalid_input_preserve_stock(self):
     ramp = PositiveAccelRamp("balanced", dt=0.1)

@@ -9,6 +9,14 @@ from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPl
 import openpilot.cereal.messaging as messaging
 
 
+def planner_input_services(*, simulation: bool, radar_enabled: bool):
+  services = ['carControl', 'carState', 'controlsState', 'vehicleParameters',
+              'radarState', 'modelV2', 'selfdriveState']
+  if simulation and radar_enabled:
+    services.append('customReservedRawData0')
+  return services
+
+
 def update_with_observer(planner, sm, observer):
   if observer is not None:
     try:
@@ -44,7 +52,8 @@ def main():
     except Exception as exc:
       cloudlog.error("simulation planner observer unavailable: %s", exc)
   pm = messaging.PubMaster(['longitudinalPlan', 'driverAssistance'])
-  sm = messaging.SubMaster(['carControl', 'carState', 'controlsState', 'vehicleParameters', 'radarState', 'modelV2', 'selfdriveState'],
+  sm = messaging.SubMaster(planner_input_services(simulation=os.environ.get('SIMULATION') == '1',
+                                                  radar_enabled=os.environ.get('VN_RADAR_CUTIN') == '1'),
                            poll='modelV2')
 
   while True:

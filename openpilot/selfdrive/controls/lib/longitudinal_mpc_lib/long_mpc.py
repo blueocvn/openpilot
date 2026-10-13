@@ -307,7 +307,8 @@ class LongitudinalMpc:
     lead_xv = self.extrapolate_lead(x_lead, v_lead, a_lead, a_lead_tau)
     return lead_xv
 
-  def update(self, radarstate, personality=log.LongitudinalPersonality.standard, t_follow_override=None):
+  def update(self, radarstate, personality=log.LongitudinalPersonality.standard, t_follow_override=None,
+             cut_in_obstacle=None):
     stock_t_follow = get_T_FOLLOW(personality)
     if t_follow_override is None:
       t_follow = stock_t_follow
@@ -327,6 +328,12 @@ class LongitudinalMpc:
 
     x_obstacles = np.column_stack([lead_0_obstacle, lead_1_obstacle])
     self.source = MPC_SOURCES[np.argmin(x_obstacles[0])]
+    cut_in = None
+    if cut_in_obstacle is not None:
+      cut_in = np.asarray(cut_in_obstacle, dtype=float)
+      if cut_in.shape != (N + 1,) or np.any(np.isnan(cut_in)) or np.any(cut_in < 0):
+        raise ValueError("cut_in_obstacle must have one nonnegative value per MPC time step")
+      x_obstacles = np.column_stack([x_obstacles, cut_in])
 
     self.yref[:,:] = 0.0
     for i in range(N):
@@ -341,6 +348,14 @@ class LongitudinalMpc:
     self.params[:,5] = LEAD_DANGER_FACTOR
 
     self.run()
+    if cut_in is not None:
+      desired_distance = get_safe_obstacle_distance(self.v_solution, t_follow)
+      denominator = self.v_solution + 10.0
+      stock_obstacle = np.minimum(lead_0_obstacle, lead_1_obstacle)
+      stock_margin = np.min((stock_obstacle - self.x_sol[:, 0] - desired_distance) / denominator)
+      cut_in_margin = np.min((cut_in - self.x_sol[:, 0] - desired_distance) / denominator)
+      if cut_in_margin < stock_margin - 1e-6:
+        self.source = LongitudinalPlanSource.lead2
     if (np.any(lead_xv_0[FCW_IDXS,0] - self.x_sol[FCW_IDXS,0] < CRASH_DISTANCE) and
             radarstate.leadOne.modelProb > 0.9):
       self.crash_cnt += 1

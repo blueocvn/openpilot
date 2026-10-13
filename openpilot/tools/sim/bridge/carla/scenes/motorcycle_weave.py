@@ -54,6 +54,8 @@ SCENE_VARIANTS = {
   ),
 }
 
+CONTROL_CASES = ("empty_road", "adjacent_only", "steady_lead")
+
 
 @dataclass(frozen=True)
 class WeaveEvent:
@@ -291,8 +293,10 @@ def compact_actor_geometry(actor_id, role, *, ego_x, ego_y, ego_yaw_deg, ego_hal
   _, lateral = tracking_error_components(actual_x=actor_x, actual_y=actor_y,
                                          reference_x=ego_x, reference_y=ego_y,
                                          reference_yaw_deg=ego_yaw_deg)
+  bumper_gap = forward - ego_half_length_m - actor_half_length_m
   return {"id": actor_id, "role": role,
-          "ego_forward_gap_m": forward - ego_half_length_m - actor_half_length_m,
+          "ego_forward_gap_m": bumper_gap,
+          "bumper_gap_m": bumper_gap,
           "ego_lateral_offset_m": lateral}
 
 
@@ -456,8 +460,9 @@ class MotorcycleWeaveScene:
     self.variant = variant
     self.seed = seed
     self.duration_s = duration_s
-    self.scheduler = ContinuousWeaveScheduler(case, seed, variant)
+    self.scheduler = None if case in CONTROL_CASES else ContinuousWeaveScheduler(case, seed, variant)
     self.background_scheduler = BackgroundTrafficScheduler(seed)
+    self._steady_lead = None
     self.ready_time_s = None
     self.start_time_s = None
     self.finished = False
@@ -533,6 +538,12 @@ class MotorcycleWeaveScene:
 
     self._update_background(elapsed_s)
 
+    if self._steady_lead is not None:
+      self._update_steady_lead(elapsed_s)
+
+    if self.case == "empty_road":
+      return
+
     if self.variant == "close_cut_in" and self._active_cut_in_contact:
       if not self._deferred_after_contact:
         self._write({"type": "cut_in_deferred", "scene_time_s": elapsed_s,
@@ -546,8 +557,14 @@ class MotorcycleWeaveScene:
     if lanes is None:
       return
     ego_lane, left_lane, right_lane, available_road_m = lanes
-    if self._ego_speed() >= SCENE_READY_SPEED_MPS:
+    if self._ego_speed() >= SCENE_READY_SPEED_MPS and self.case not in ("empty_road", "steady_lead"):
       self._maintain_background(elapsed_s, left_lane, right_lane)
+    if self.case == "steady_lead":
+      if self._ego_speed() >= SCENE_READY_SPEED_MPS:
+        self._maintain_steady_lead(elapsed_s, ego_lane)
+      return
+    if self.case == "adjacent_only":
+      return
     if self.scheduler.exhausted:
       return
     if elapsed_s < self.scheduler.next_due_s:
@@ -650,6 +667,70 @@ class MotorcycleWeaveScene:
     self._write({"type": "background_started", "scene_time_s": elapsed_s, "actor_id": actor.id,
                  "side": slot.side, "speed_mps": slot.speed_mps})
 
+  def _steady_lead_spawn_clear(self, transform):
+    yaw = math.radians(transform.rotation.yaw)
+    forward = (math.cos(yaw), math.sin(yaw))
+    right = (-forward[1], forward[0])
+    location = transform.location
+    candidate = [(location.x + forward[0] * along + right[0] * across,
+                  location.y + forward[1] * along + right[1] * across)
+                 for along, across in ((-2.4, -1.08), (2.4, -1.08), (2.4, 1.08), (-2.4, 1.08))]
+    ego_transform = self.ego_vehicle.get_transform()
+    ego_polygon = [(vertex.x, vertex.y) for vertex in
+                   self.ego_vehicle.bounding_box.get_world_vertices(ego_transform)]
+    return spawn_footprints_clear(candidate, ego_polygon, [], ego_margin_m=8.0)
+
+  def _maintain_steady_lead(self, elapsed_s, ego_lane):
+    if self._steady_lead is not None:
+      return
+    try:
+      transform = self._advance(ego_lane, 35.0).transform
+    except RuntimeError:
+      return
+    transform.location.z += 0.15
+    if not self._steady_lead_spawn_clear(transform):
+      return
+    blueprint = self.world.get_blueprint_library().find("vehicle.tesla.model3")
+    actor = self.world.try_spawn_actor(blueprint, transform)
+    if actor is None:
+      return
+    speed_mps = 7.0
+    forward = transform.get_forward_vector()
+    actor.set_target_velocity(self.carla.Vector3D(x=forward.x * speed_mps,
+                                                  y=forward.y * speed_mps, z=0.0))
+    self.actor_sink.append(actor)
+    self._steady_lead = {"actor": actor, "speed_mps": speed_mps, "speed_integral": 0.0}
+    self._write({"type": "steady_lead_started", "scene_time_s": elapsed_s,
+                 "actor_id": actor.id, "speed_mps": speed_mps})
+
+  def _update_steady_lead(self, elapsed_s):
+    item = self._steady_lead
+    actor = item["actor"]
+    if not actor.is_alive:
+      if actor in self.actor_sink:
+        self.actor_sink.remove(actor)
+      self._steady_lead = None
+      return
+    ego_transform = self.ego_vehicle.get_transform()
+    location = actor.get_location()
+    forward_distance = ego_relative_longitudinal(
+      ego_transform.location.x, ego_transform.location.y, location.x, location.y,
+      ego_transform.rotation.yaw)
+    if forward_distance < -12.0 or forward_distance > 80.0:
+      actor.destroy()
+      self.actor_sink.remove(actor)
+      self._steady_lead = None
+      self._write({"type": "steady_lead_retired", "scene_time_s": elapsed_s, "actor_id": actor.id})
+      return
+    lane = self.world.get_map().get_waypoint(
+      location, project_to_road=True, lane_type=self.carla.LaneType.Driving)
+    if lane is not None:
+      try:
+        target = self._advance(lane, self.LOOKAHEAD_M).transform.location
+        self._apply_control(item, target)
+      except RuntimeError:
+        pass
+
   def _spawn_clear(self, transform):
     location = transform.location
     candidate = proposed_motorcycle_footprint(location.x, location.y, transform.rotation.yaw)
@@ -675,12 +756,13 @@ class MotorcycleWeaveScene:
       longitudinal_accel = (ego_acceleration.x * forward.x + ego_acceleration.y * forward.y
                             if ego_acceleration is not None and forward is not None else None)
       compact_actors = []
-      for item in (*self._actors, *self._background):
+      for item in (*self._actors, *self._background,
+                   *([self._steady_lead] if self._steady_lead is not None else [])):
         actor = item["actor"]
         if not actor.is_alive:
           continue
         location = actor.get_location()
-        role = "cut_in" if "event" in item else "background"
+        role = "cut_in" if "event" in item else "steady_lead" if item is self._steady_lead else "background"
         compact_actors.append(compact_actor_geometry(
           actor.id, role, ego_x=ego_transform.location.x, ego_y=ego_transform.location.y,
           ego_yaw_deg=ego_transform.rotation.yaw, ego_half_length_m=self.ego_vehicle.bounding_box.extent.x,
@@ -764,6 +846,16 @@ class MotorcycleWeaveScene:
         "position_m": [transform.location.x, transform.location.y, transform.location.z],
         "speed_mps": math.sqrt(velocity.x ** 2 + velocity.y ** 2 + velocity.z ** 2),
         "target_speed_mps": item["speed_mps"],
+      })
+    if self._steady_lead is not None and self._steady_lead["actor"].is_alive:
+      actor = self._steady_lead["actor"]
+      transform = actor.get_transform()
+      velocity = actor.get_velocity()
+      actors.append({
+        "id": actor.id, "role": "steady_lead",
+        "position_m": [transform.location.x, transform.location.y, transform.location.z],
+        "speed_mps": math.sqrt(velocity.x ** 2 + velocity.y ** 2 + velocity.z ** 2),
+        "target_speed_mps": self._steady_lead["speed_mps"],
       })
     self._write({
       "type": "ground_truth",
@@ -860,6 +952,7 @@ class MotorcycleWeaveScene:
     self.actor_sink.append(sensor)
 
   def _write_manifest(self):
+    from openpilot.tools.sim.lib.carla_radar import RADAR_MOUNT_X_M, RADAR_MOUNT_Z_M, RADAR_SENSOR_ATTRIBUTES
     self.report_dir.mkdir(parents=True, exist_ok=True)
     root = Path(__file__).resolve().parents[6]
     model_dir = root / "openpilot/selfdrive/modeld/models"
@@ -875,11 +968,16 @@ class MotorcycleWeaveScene:
                     "openpilot/tools/sim/cut_in_exposure.py",
                     "openpilot/tools/sim/exposure_matching.py",
                     "openpilot/tools/sim/planner_trace.py",
+                    "openpilot/tools/sim/lib/carla_radar.py",
+                    "openpilot/tools/sim/lib/simulated_sensors.py",
+                    "openpilot/selfdrive/controls/lib/vn_radar_cutin_policy.py",
                     "openpilot/tools/sim/model_provenance.py",
                     "openpilot/selfdrive/controls/plannerd.py",
                     "openpilot/selfdrive/modeld/modeld.py",
                     "openpilot/selfdrive/controls/lib/longitudinal_planner.py",
-                    "openpilot/selfdrive/controls/lib/vn_traffic_policy.py")
+                    "openpilot/selfdrive/controls/lib/vn_traffic_policy.py",
+                    "openpilot/selfdrive/controls/lib/vn_cutin_policy.py",
+                    "openpilot/selfdrive/controls/lib/longitudinal_mpc_lib/long_mpc.py")
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,
                               text=True, check=False, timeout=5)
     dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", *source_paths],
@@ -903,6 +1001,10 @@ class MotorcycleWeaveScene:
       "params": captured_params,
       "vn_traffic_mode": os.environ.get("VN_TRAFFIC_MODE", "0"),
       "vn_traffic_profile": os.environ.get("VN_TRAFFIC_PROFILE", "balanced"),
+      "vn_radar_cutin": os.environ.get("VN_RADAR_CUTIN", "0"),
+      "radar_sensor": {**RADAR_SENSOR_ATTRIBUTES, "mount_x_m": RADAR_MOUNT_X_M,
+                       "mount_z_m": RADAR_MOUNT_Z_M,
+                       "coordinate_frame": "CARLA vehicle local: +x forward, +y right, +z up"},
       "source_sha256": {name: sha256_path(root / name) for name in source_paths},
       "onnx_sha256": {name: sha256_path(model_dir / name) for name in artifact_names},
       "compiled_artifact_sha256": {path.name: sha256_path(path) for path in compiled},
@@ -1101,6 +1203,8 @@ class MotorcycleWeaveScene:
       return "active_cut_in"
     if any(item["actor"].id == actor_id for item in self._background):
       return "background"
+    if getattr(self, "_steady_lead", None) is not None and self._steady_lead["actor"].id == actor_id:
+      return "steady_lead"
     return "other"
 
   def _on_collision(self, event):

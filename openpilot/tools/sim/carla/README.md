@@ -117,15 +117,110 @@ gap, entry TTC, active-cut-in contacts, and other contacts.
 The [Phase 2 architecture note](../../../../docs/architecture/vietnam-traffic-phase2.md)
 maps the planner, CARLA bridge, telemetry, and the remaining acceptance gates.
 
-`VN_TRAFFIC_MODE=1` enables two opt-in low-speed policies in the longitudinal
-planner: a positive-acceleration ramp and up to 0.30 s extra following time
+#### Optional CARLA radar-assisted cut-in (experimental)
+
+`VN_RADAR_CUTIN=1` adds a forward CARLA radar sensor and a simulation-only
+tracker. The sensor publishes only range/angle/height/radial-velocity returns;
+actor IDs, actor poses, and the scene schedule remain evaluation-only. Phase 2
+combines a confirmed radar/path conflict with the existing model cut-in obstacle
+in MPC. `VN_TRAFFIC_MODE=0` still uses the stock planner/MPC path, even when
+the sensor is enabled for a paired comparison. The model and compiled artifact
+are not rebuilt, and the bridge is not told to brake.
+
+Run both modes visibly and sequentially from WSL in this directory. The
+`alternating` case tests right-to-left and left-to-right within one episode:
+
+```bash
+VN_RADAR_CUTIN=1 VN_TRAFFIC_MODE=0 bash run.sh all --openpilot-longitudinal \
+  --carla-town Town04_Opt --carla-spawn-point 40 \
+  --carla-scene motorcycle_weave --carla-scene-variant close_cut_in \
+  --carla-scene-case alternating --carla-scene-seed 42 \
+  --carla-scene-duration 30 --no-experimental-mode
+
+VN_RADAR_CUTIN=1 VN_TRAFFIC_MODE=1 bash run.sh all --openpilot-longitudinal \
+  --carla-town Town04_Opt --carla-spawn-point 40 \
+  --carla-scene motorcycle_weave --carla-scene-variant close_cut_in \
+  --carla-scene-case alternating --carla-scene-seed 42 \
+  --carla-scene-duration 30 --no-experimental-mode
+
+bash run.sh stop
+```
+
+From the repository root, the finite-run diagnostic below replays measured
+radar returns against the planner path and matches alerts to scene actors
+**only after planning**, for evaluation. It reads all rotated radar/planner
+files from the report directory:
+
+```bash
+.venv/bin/python -m openpilot.tools.sim.analyze_radar_cutin \
+  .carla/reports/REPORT_DIRECTORY
+```
+
+Early visible tests showed braking and two completed cut-ins without contact,
+but the motorcycle lateral tracking gate remains invalid and no synchronized
+video was available. This is preliminary simulation evidence, not an accepted
+collision-avoidance result or a real-vehicle feature. See the
+[radar cut-in report](../../../../docs/reports/2026-09-24-vn-radar-cutin-preliminary.md).
+
+`VN_TRAFFIC_MODE=1` enables three opt-in low-speed policies in the longitudinal
+planner: model-based early cut-in prediction, a positive-acceleration ramp, and up to 0.30 s extra following time
 when a fresh `leadOne` or `leadTwo` is closing with TTC below 5 s. It is active
 only with `SIMULATION=1`, openpilot longitudinal engaged, and experimental
 mode off. The default is `0` (stock). `VN_TRAFFIC_PROFILE` accepts `balanced`
-(default), `gentle`, or `responsive`. Lead selection, model weights and the
-actuator bridge are unchanged. The MPC decides the deceleration request from
-the increased gap; the policy does not force brake actuation or improve lead
-detection. It must not be treated as a vehicle-ready safety improvement.
+(default), `gentle`, or `responsive`. Model weights, compiled model and the
+actuator bridge are unchanged. The cut-in predictor uses modelV2 lead
+hypotheses and ego path only; it does not receive CARLA actor positions or
+force brake actuation. It adds a future obstacle to the existing MPC only
+after three fresh confirming frames. It can confirm either a model trajectory
+crossing or consistent frame-to-frame lateral motion, and keeps a confirmed
+track through short uncertainty using a 0.3 s retraction. The positive
+acceleration ramp also starts at standstill, avoiding a full first request
+followed by a sharp reduction as the car begins moving. In the latest visible
+seed-42 run, throttle changed smoothly after engagement instead of alternating
+between full throttle and brake. The run still contacted the motorcycle, and
+its live model observations did not confirm a cut-in. A replay of an earlier
+trace confirmed 0.316 s before lane entry but did not make MPC choose `lead2`.
+This is **not** an accepted collision-avoidance improvement or a vehicle-ready
+safety feature.
+
+Run the same close-cut-in scene in Original and Enhancement modes, visibly
+and sequentially in WSL. Use `right_to_left`, `left_to_right`, or `alternating`
+as the case; the one-direction cases remain useful when a first contact
+defers the second crossing:
+
+```bash
+VN_TRAFFIC_MODE=0 bash run.sh all --openpilot-longitudinal \
+  --carla-town Town04_Opt --carla-spawn-point 40 \
+  --carla-scene motorcycle_weave --carla-scene-variant close_cut_in \
+  --carla-scene-case right_to_left --carla-scene-seed 42 \
+  --carla-scene-duration 30 --no-experimental-mode
+
+VN_TRAFFIC_MODE=1 bash run.sh all --openpilot-longitudinal \
+  --carla-town Town04_Opt --carla-spawn-point 40 \
+  --carla-scene motorcycle_weave --carla-scene-variant close_cut_in \
+  --carla-scene-case right_to_left --carla-scene-seed 42 \
+  --carla-scene-duration 30 --no-experimental-mode
+```
+
+Controls share the same 30 km/h ego and 30-second report but schedule no
+cut-ins: `--carla-scene-case empty_road` has no traffic,
+`adjacent_only` keeps motorcycles in adjacent lanes, and `steady_lead`
+spawns one same-lane car at 35 m targeting 7 m/s. These controls do not
+alter the `close_cut_in` case. From the repository root, inspect each run:
+
+```bash
+.venv/bin/python -m openpilot.tools.sim.analyze_motorcycle_weave \
+  .carla/reports/REPORT_DIRECTORY
+.venv/bin/python -m openpilot.tools.sim.planner_trace \
+  .carla/reports/ORIGINAL_REPORT_DIRECTORY \
+  --stock-ref 6a125380ac8e3b261ed1feb60a9eb8d6d84e18a5
+```
+
+The summary lists each cut-in separately, including actual entry gap,
+contact, confirmation and MPC/deceleration timing. A matching side is only
+*side-compatible*, not proof that a model hypothesis identified that actor.
+`lead2` marks the lowest MPC obstacle margin, not proof of braking causality.
+Deferred crossings and missing model evidence cannot count as successes.
 
 Run a 60-second visible baseline in WSL, then repeat with the candidate; use
 the same town, spawn, seed, camera, Params, and scene settings for each pair:
