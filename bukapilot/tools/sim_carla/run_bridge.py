@@ -52,6 +52,12 @@ def main():
     manager = subprocess.Popen(["./launch_openpilot.sh"], cwd=SIM_DIR, env=os.environ.copy(),
                                stdout=manager_log, stderr=subprocess.STDOUT, start_new_session=True)
 
+  relay = None
+  if os.environ.get("OP_UI", "0") == "1":
+    # stream bukapilot state + camera to openpilot's UI on the host (op_ui/host_ui.py)
+    relay = subprocess.Popen([sys.executable, os.path.join(SIM_DIR, "lib", "ui_relay.py")],
+                             env=os.environ.copy(), start_new_session=True)
+
   queue = Queue()
   bridge = CarlaBridge(host=args.host, port=args.port, town=args.town, spawn_point=args.spawn_point,
                        vehicle=args.vehicle, low_quality=args.low_quality, weather=args.weather,
@@ -72,6 +78,8 @@ def main():
     if bridge_p.is_alive():
       bridge_p.terminate()
       bridge_p.join(10)
+    if relay is not None:
+      relay.terminate()
     if manager is not None:
       # manager.py stops its managed processes on KeyboardInterrupt
       manager.send_signal(signal.SIGINT)
