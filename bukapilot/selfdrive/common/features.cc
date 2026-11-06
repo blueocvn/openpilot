@@ -2,6 +2,7 @@
 #include "json11.hpp"
 #include <sstream>
 #include <set>
+#include <algorithm>
 
 Features::Features() {
   std::string err;
@@ -40,7 +41,7 @@ int Features::set_package(const std::string& package) {
   reset();
   std::string cleaned_package = package;
 
-  cleaned_package.erase(remove_if(cleaned_package.begin(), cleaned_package.end(), [](char c) {
+  cleaned_package.erase(std::remove_if(cleaned_package.begin(), cleaned_package.end(), [](char c) {
     return ::isspace(c) || c == '.';
   }), cleaned_package.end());
 
