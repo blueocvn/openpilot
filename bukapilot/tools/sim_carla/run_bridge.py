@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bridge between CARLA and bukapilot (upstream openpilot tools/sim layout).
 
-Normally started inside the bukapilot-sim:local container by start_docker.sh.
+Normally started by run.sh (bash run.sh all ...) inside the Ubuntu WSL distro.
 """
 import argparse
 import os
@@ -20,12 +20,13 @@ def parse_args(add_args=None):
   parser = argparse.ArgumentParser(description='Bridge between CARLA and bukapilot.')
   parser.add_argument('--joystick', action='store_true', help='read /dev/input/js0 instead of the keyboard')
   parser.add_argument('--low_quality', action='store_true', help='unload foliage, buildings, props, ... from the map')
-  parser.add_argument('--town', default='Town04_Opt')
-  parser.add_argument('--spawn_point', type=int, default=16)
+  # the --carla-* spellings match openpilot/tools/sim/run_bridge.py
+  parser.add_argument('--town', '--carla-town', dest='town', default='Town04_Opt')
+  parser.add_argument('--spawn_point', '--carla-spawn-point', dest='spawn_point', type=int, default=16)
   parser.add_argument('--vehicle', default='vehicle.tesla.model3', help='CARLA blueprint for the ego car')
   parser.add_argument('--weather', default='ClearNoon', help='carla.WeatherParameters preset')
-  parser.add_argument('--host', default=os.environ.get('CARLA_HOST', '127.0.0.1'))
-  parser.add_argument('--port', type=int, default=int(os.environ.get('CARLA_PORT', '2000')))
+  parser.add_argument('--host', '--carla-host', dest='host', default=os.environ.get('CARLA_HOST', '127.0.0.1'))
+  parser.add_argument('--port', '--carla-port', dest='port', type=int, default=int(os.environ.get('CARLA_PORT', '2000')))
   parser.add_argument('--no-auto-engage', dest='auto_engage', action='store_false',
                       help='do not press SET automatically; engage with key 2 (or 1)')
   parser.add_argument('--launch-openpilot', action='store_true',

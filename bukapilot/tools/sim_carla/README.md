@@ -15,39 +15,61 @@ hai bên dùng chung tên topic msgq). Bảng so sánh xem
 
 ## Chạy
 
-Dùng 2 image Docker (giống `tools/sim`):
-* `bukapilot-sim:local`: Ubuntu 20.04, Python 3.8, client carla 0.9.12.
-  Build một lần từ gốc bukapilot:
-  `docker build -t bukapilot-sim:local -f tools/sim/Dockerfile.bukapilot .`
-* CARLA server 0.9.12. Lần đầu `start_carla.sh` tự build image `carla-sim:0.9.12`
-  từ `Dockerfile.carla` để mở được cửa sổ CARLA.
+Không dùng Docker. Cấu trúc theo `openpilot/tools/sim/carla`: server CARLA 0.9.12
+chạy **native trên Windows**, bukapilot + bridge chạy trong **WSL Ubuntu** (venv
+Python 3.8 do `uv` tạo). Một điểm vào duy nhất: `run.sh` (gọi `run.ps1` để điều
+khiển phía Windows).
 
 ```bash
-cd tools/sim_carla
-./start_carla.sh        # terminal 1: cửa sổ CARLA nhìn xe từ phía sau
-./start_docker.sh       # terminal 2: scons + bukapilot + bridge, mở UI Qt
+wsl -d Ubuntu-22.04
+cd /mnt/d/openpilot/bukapilot/tools/sim_carla     # trong WSL
+bash run.sh setup                                  # một lần: gói apt, venv 3.8, libyuv, scons, CARLA
+bash run.sh all --carla-town Town04_Opt --carla-spawn-point 16
 ```
+
+Lần đầu cần mở cổng tường lửa cho WSL (PowerShell **Administrator**):
+
+```powershell
+& 'D:\openpilotukapilot	ools\sim_carlaun.ps1' -Command firewall-add -WslDistro Ubuntu-22.04
+```
+
+Sau khi Windows/WSL khởi động lại mà bridge không nối được CARLA, tạo lại rule
+(`-Command firewall-remove` rồi `firewall-add`), vì IP của WSL đổi.
+
+| Lệnh | Việc |
+|---|---|
+| `bash run.sh setup` | cài gói, venv Python 3.8, build libyuv, `scons`, tải CARLA |
+| `bash run.sh all [tham số bridge]` | CARLA + bukapilot + bridge |
+| `bash run.sh server` / `bridge [tham số]` | chỉ một nửa |
+| `bash run.sh status` / `stop` | xem / dừng |
 
 Hai cửa sổ hiện ra (giống cách openpilot chạy CARLA):
 1. **CARLA**: camera chase bám sau xe (`CARLA_SPECTATOR_MODE=free` để tự điều
    khiển góc nhìn).
-2. **UI bukapilot**: camera trên xe kèm đường đi, làn, xe phía trước, cảnh báo
-   và tốc độ đặt.
+2. **UI bukapilot** (qua WSLg): camera trên xe kèm đường đi, làn, xe phía trước,
+   cảnh báo và tốc độ đặt.
 
 Xe tự engage khi bukapilot sẵn sàng (bấm SET rồi nhả). Muốn engage bằng tay thì
-dùng `--no-auto-engage`.
+dùng `--no-auto-engage`. Danh sách scenario và map xem [demo.md](demo.md).
 
 | Biến / tham số | Ý nghĩa |
 |---|---|
-| `CARLA_HEADLESS=1 ./start_carla.sh` | không mở cửa sổ CARLA (`-RenderOffScreen`) |
-| `CARLA_QUALITY=Low` | chất lượng render (mặc định `High`) |
-| `CARLA_DETACH=1` | chạy CARLA ngầm (`docker logs -f carla_server`) |
-| `--town`, `--spawn_point` | map và điểm xuất phát (mặc định `Town04_Opt`, 16) |
+| `CARLA_HEADLESS=1` | không mở cửa sổ CARLA (`-RenderOffScreen`) |
+| `CARLA_QUALITY=Low\|High` | chất lượng render (mặc định `Low`) |
+| `CARLA_ROOT=/mnt/e/CARLA/0.9.12/WindowsNoEditor` | dùng bản CARLA đã giải nén sẵn thay vì tải |
+| `CARLA_HOST`, `CARLA_PORT` | địa chỉ server (mặc định gateway của WSL, cổng 2000) |
+| `SKIP_BUILD=1` | bỏ qua `scons` |
+| `CARLA_CAMERA_X`, `CARLA_CAMERA_Z` | vị trí camera (mặc định 0.8 / 1.13 m như bridge cũ) |
+
+Tham số truyền cho bridge (sau `bash run.sh all`):
+
+| Tham số | Ý nghĩa |
+|---|---|
+| `--carla-town`, `--carla-spawn-point` | map và điểm xuất phát (mặc định `Town04_Opt`, 16); viết cũ `--town`, `--spawn_point` vẫn dùng được |
+| `--weather` | thời tiết (mặc định `ClearNoon`) |
 | `--low_quality` | gỡ cây, nhà, props khỏi map để nhẹ máy |
 | `--duration 120` | chạy không cần bàn phím, thoát sau 120 s (smoke test) |
 | `--joystick` | đọc vô-lăng/tay cầm `/dev/input/js0` |
-| `SKIP_BUILD=1` / `SHELL_ONLY=1` | bỏ qua scons / chỉ mở shell trong container |
-| `CARLA_CAMERA_X`, `CARLA_CAMERA_Z` | vị trí camera (mặc định 0.8 / 1.13 m như bridge cũ) |
 
 Log của bukapilot nằm ở `.carla/logs/bukapilot.log` (trong gốc bukapilot).
 
@@ -66,10 +88,10 @@ Log của bukapilot nằm ở `.carla/logs/bukapilot.log` (trong gốc bukapilot
 ## Test
 
 ```bash
-docker run --rm --gpus all -u $(id -u):$(id -g) -e HOME=/home/sim -e PYTHONPATH=$PWD \
-  -v $PWD:$PWD -w $PWD bukapilot-sim:local python3 -m unittest tools.sim_carla.tests.test_sim_carla -v
+cd /mnt/d/openpilot/bukapilot          # gốc bukapilot, trong WSL
+PYTHONPATH=$PWD ~/.cache/bukapilot-carla/venv/bin/python -m unittest tools.sim_carla.tests.test_sim_carla -v
 ```
-(chạy ở gốc bukapilot). Test kiểm tra:
+Test kiểm tra:
 * chuyển màu BGRA→I420 bằng NumPy cho ra kết quả trùng từng bit với kernel
   OpenCL `rgb_to_yuv.cl` của bridge cũ;
 * CAN giả lập được chính `CarState` Honda của bukapilot đọc đúng: số D, tốc độ,
