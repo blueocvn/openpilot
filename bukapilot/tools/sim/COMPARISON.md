@@ -2,8 +2,8 @@ So sánh các cấu hình chạy simulator
 ===================================
 
 * **A. openpilot**: `openpilot/tools/sim` của openpilot đời mới (gốc repo này).
-* **B. bukapilot cũ**: `bukapilot/tools/sim` (`bridge.py`, `start_bukapilot_docker.sh`).
-* **C. bukapilot mới**: `bukapilot/tools/sim_carla` (bridge của A port sang bukapilot).
+* **B. bukapilot cũ**: `tools/sim` cũ (`bridge.py`, `start_bukapilot_docker.sh`), đã xóa, xem git history.
+* **C. bukapilot mới**: `bukapilot/tools/sim` (bridge của A port sang bukapilot).
 
 A và B là hai cấu hình đang có. C là kết quả của việc tích hợp.
 
@@ -58,7 +58,7 @@ A và B là hai cấu hình đang có. C là kết quả của việc tích hợ
 
 ## Những gì C giữ nguyên của bukapilot
 
-Không sửa file nào ngoài `tools/sim_carla/`. C dùng cereal 0.8.13, VisionIPC,
+Không sửa file nào ngoài `tools/sim/`. C dùng cereal 0.8.13, VisionIPC,
 manager, controlsd, plannerd, modeld, locationd, CarState Honda và UI Qt của
 bukapilot đúng như hiện có. Image Docker và cách build bằng scons của B được
 dùng lại.

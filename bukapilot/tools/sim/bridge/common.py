@@ -23,8 +23,8 @@ import numpy as np
 import cereal.messaging as messaging
 from common.realtime import Ratekeeper
 from selfdrive.car.honda.values import CruiseButtons
-from tools.sim_carla.lib.common import SimulatorState
-from tools.sim_carla.lib.params import set_params_enabled
+from tools.sim.lib.common import SimulatorState
+from tools.sim.lib.params import set_params_enabled
 
 QueueMessage = namedtuple("QueueMessage", ["type", "info"], defaults=[None])
 
@@ -190,8 +190,8 @@ class SimulatorBridge(ABC):
 
   def _run(self, q):
     # imported here so the bridge module can be loaded without the sim deps
-    from tools.sim_carla.lib.simulated_car import SimulatedCar
-    from tools.sim_carla.lib.simulated_sensors import SimulatedSensors
+    from tools.sim.lib.simulated_car import SimulatedCar
+    from tools.sim.lib.simulated_sensors import SimulatedSensors
 
     self.world = self.spawn_world(q)
     self.simulated_car = SimulatedCar()

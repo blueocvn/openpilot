@@ -16,7 +16,7 @@ import cereal.messaging as messaging
 from opendbc.can.packer import CANPacker
 from selfdrive.boardd.boardd_api_impl import can_list_to_can_capnp  # pylint: disable=no-name-in-module,import-error
 from selfdrive.car import crc8_pedal
-from tools.sim_carla.lib.common import SimulatorState
+from tools.sim.lib.common import SimulatorState
 
 GEAR_SHIFTER_D = 8  # VAL_ 401 GEAR_SHIFTER 8 "D"
 PEDAL_RELEASED = -0.2  # decodes to INTERCEPTOR_GAS -0.07 / GAS2 -0.25 -> gasPressed False

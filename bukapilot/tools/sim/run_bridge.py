@@ -39,8 +39,8 @@ def parse_args(add_args=None):
 def main():
   args = parse_args()
 
-  from tools.sim_carla.bridge.carla_bridge import CarlaBridge
-  from tools.sim_carla.lib.params import set_params_enabled
+  from tools.sim.bridge.carla_bridge import CarlaBridge
+  from tools.sim.lib.params import set_params_enabled
 
   manager = manager_log = None
   if args.launch_openpilot:
@@ -66,13 +66,13 @@ def main():
   bridge_p = bridge.run(queue)
   try:
     if args.duration is not None:
-      from tools.sim_carla.lib.keyboard_ctrl import timed_poll_thread
+      from tools.sim.lib.keyboard_ctrl import timed_poll_thread
       timed_poll_thread(queue, args.duration, bridge_p)
     elif args.joystick:
-      from tools.sim_carla.lib.manual_ctrl import wheel_poll_thread
+      from tools.sim.lib.manual_ctrl import wheel_poll_thread
       wheel_poll_thread(queue)
     else:
-      from tools.sim_carla.lib.keyboard_ctrl import keyboard_poll_thread
+      from tools.sim.lib.keyboard_ctrl import keyboard_poll_thread
       keyboard_poll_thread(queue)
     bridge_p.join(30)
   finally:

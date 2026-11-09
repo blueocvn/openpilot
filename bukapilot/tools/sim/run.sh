@@ -135,10 +135,10 @@ start_bridge() {
 
 stop_bukapilot() {
   pkill -TERM -f "$ROOT/selfdrive/manager/manager.py" 2>/dev/null || true
-  pkill -TERM -f 'tools/sim_carla/run_bridge.py' 2>/dev/null || true
+  pkill -TERM -f 'tools/sim/run_bridge.py' 2>/dev/null || true
   sleep 2
   pkill -KILL -f "$ROOT/selfdrive/manager/manager.py" 2>/dev/null || true
-  pkill -KILL -f 'tools/sim_carla/run_bridge.py' 2>/dev/null || true
+  pkill -KILL -f 'tools/sim/run_bridge.py' 2>/dev/null || true
 }
 
 case "${1:-all}" in
@@ -154,7 +154,7 @@ case "${1:-all}" in
   status)
     windows_launcher -Command status || true
     pgrep -f "$ROOT/selfdrive/manager/manager.py" >/dev/null && echo "bukapilot manager is running" || echo "bukapilot manager is not running"
-    pgrep -f 'tools/sim_carla/run_bridge.py' >/dev/null && echo "CARLA bridge is running" || echo "CARLA bridge is not running"
+    pgrep -f 'tools/sim/run_bridge.py' >/dev/null && echo "CARLA bridge is running" || echo "CARLA bridge is not running"
     ;;
   stop)
     stop_bukapilot

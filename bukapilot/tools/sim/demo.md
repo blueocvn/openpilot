@@ -6,7 +6,7 @@ kỹ thuật xem [README.md](README.md).
 
 Mô hình: server CARLA 0.9.12 chạy **native trên Windows**; bukapilot, bridge và UI
 chạy trong **WSL Ubuntu**. Mọi lệnh bên dưới chạy trong WSL, ở thư mục
-`tools/sim_carla`, trừ lệnh tường lửa (PowerShell Administrator).
+`tools/sim`, trừ lệnh tường lửa (PowerShell Administrator).
 
 ## 0. Mở WSL (Ubuntu)
 
@@ -24,7 +24,7 @@ Dấu nhắc lệnh đổi thành dạng `tên@máy:~$` là đã vào Ubuntu. �
 `D:\` là `/mnt/d`, `E:\` là `/mnt/e`. Vào thư mục demo:
 
 ```bash
-cd /mnt/d/openpilot/bukapilot/tools/sim_carla
+cd /mnt/d/openpilot/bukapilot/tools/sim
 ```
 
 Kiểm tra distro dùng WSL2 (gõ trong PowerShell):
@@ -45,7 +45,7 @@ Mỗi lệnh `bash run.sh ...` mở trong một cửa sổ Ubuntu; muốn xem lo
 Yêu cầu: Windows 11, WSL2 + WSLg, GPU NVIDIA, khoảng 60 GB trống trên ổ chứa repo.
 
 ```bash
-cd /mnt/d/openpilot/bukapilot/tools/sim_carla
+cd /mnt/d/openpilot/bukapilot/tools/sim
 bash run.sh setup
 ```
 
@@ -62,7 +62,7 @@ CARLA_ROOT=/mnt/e/CARLA/0.9.12/WindowsNoEditor bash run.sh setup
 **Mở cổng tường lửa** cho WSL (PowerShell **Administrator**):
 
 ```powershell
-& 'D:\openpilot\bukapilot\tools\sim_carla\run.ps1' -Command firewall-add -WslDistro Ubuntu-22.04
+& 'D:\openpilot\bukapilot\tools\sim\run.ps1' -Command firewall-add -WslDistro Ubuntu-22.04
 ```
 
 Nếu CARLA đã lên mà bridge không nối được (thường sau khi khởi động lại Windows/WSL

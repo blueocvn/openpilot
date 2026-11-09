@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Offline tests for tools/sim_carla (no CARLA server needed).
+"""Offline tests for tools/sim (no CARLA server needed).
 
-  PYTHONPATH=<bukapilot root> python3 -m unittest discover -s tools/sim_carla/tests -t . -v
+  PYTHONPATH=<bukapilot root> python3 -m unittest discover -s tools/sim/tests -t . -v
 """
 import json
 import os
@@ -18,9 +18,9 @@ from selfdrive.car.honda.carcontroller import CarController
 from selfdrive.car.honda.carstate import CarState
 from selfdrive.car.honda.interface import CarInterface
 from selfdrive.car.honda.values import CAR, CruiseButtons
-from tools.sim_carla.lib.camerad import bgra_to_i420
-from tools.sim_carla.lib.common import H, W, SimulatorState, vec3
-from tools.sim_carla.lib.simulated_car import SimulatedCar
+from tools.sim.lib.camerad import bgra_to_i420
+from tools.sim.lib.common import H, W, SimulatorState, vec3
+from tools.sim.lib.simulated_car import SimulatedCar
 
 
 def opencl_i420(bgra):

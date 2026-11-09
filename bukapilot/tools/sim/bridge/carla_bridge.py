@@ -1,5 +1,5 @@
-from tools.sim_carla.bridge.common import SimulatorBridge
-from tools.sim_carla.bridge.carla_world import CarlaWorld
+from tools.sim.bridge.common import SimulatorBridge
+from tools.sim.bridge.carla_world import CarlaWorld
 
 
 class CarlaBridge(SimulatorBridge):

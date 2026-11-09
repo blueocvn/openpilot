@@ -16,7 +16,7 @@ import numpy as np
 import cereal.messaging as messaging
 from cereal.visionipc.visionipc_pyx import VisionIpcServer, VisionStreamType  # pylint: disable=no-name-in-module, import-error
 from common.realtime import sec_since_boot
-from tools.sim_carla.lib.common import W, H
+from tools.sim.lib.common import W, H
 
 
 def bgra_to_i420(bgra):

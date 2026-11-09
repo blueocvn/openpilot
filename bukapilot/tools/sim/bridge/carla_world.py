@@ -12,8 +12,8 @@ import time
 
 import numpy as np
 
-from tools.sim_carla.bridge.common import QueueMessage, QueueMessageType
-from tools.sim_carla.lib.common import H, W, SimulatorState, World, vec3
+from tools.sim.bridge.common import QueueMessage, QueueMessageType
+from tools.sim.lib.common import H, W, SimulatorState, World, vec3
 
 
 class CarlaWorld(World):

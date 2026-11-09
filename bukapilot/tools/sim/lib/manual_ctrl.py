@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-# set up wheel
+# Joystick/wheel input, ported from tools/sim/lib/manual_ctrl.py to the
+# QueueMessage protocol used by tools/sim.
 import array
 import os
 import struct
 from fcntl import ioctl
 from typing import NoReturn
 
+from tools.sim.bridge.common import control_cmd_gen
+
 # Iterate over the joystick devices.
 print('Available devices:')
-for fn in os.listdir('/dev/input'):
+for fn in (os.listdir('/dev/input') if os.path.isdir('/dev/input') else []):
     if fn.startswith('js'):
         print(f'  /dev/input/{fn}')
 
@@ -152,37 +155,37 @@ def wheel_poll_thread(q: 'Queue[str]') -> NoReturn:
       if axis == "z":  # gas
         fvalue = value / 32767.0
         axis_states[axis] = fvalue
-        normalized = (1 - fvalue) * 50
-        q.put(f"throttle_{normalized:f}")
+        normalized = (1 - fvalue) / 2
+        q.put(control_cmd_gen(f"throttle_{normalized:f}"))
 
       elif axis == "rz":  # brake
         fvalue = value / 32767.0
         axis_states[axis] = fvalue
-        normalized = (1 - fvalue) * 50
-        q.put(f"brake_{normalized:f}")
+        normalized = (1 - fvalue) / 2
+        q.put(control_cmd_gen(f"brake_{normalized:f}"))
 
       elif axis == "x":  # steer angle
         fvalue = value / 32767.0
         axis_states[axis] = fvalue
         normalized = fvalue
-        q.put(f"steer_{normalized:f}")
+        q.put(control_cmd_gen(f"steer_{normalized:f}"))
 
     elif mtype & 0x01:  # buttons
       if value == 1: # press down
         if number in [0, 19]:  # X
-          q.put("cruise_down")
+          q.put(control_cmd_gen("cruise_down"))
 
         elif number in [3, 18]:  # triangle
-          q.put("cruise_up")
+          q.put(control_cmd_gen("cruise_up"))
 
         elif number in [1, 6]:  # square
-          q.put("cruise_cancel")
+          q.put(control_cmd_gen("cruise_cancel"))
 
-        elif number in [10, 21]:  # R3
-          q.put("reverse_switch")
+        elif number in [10, 21]:  # R3: reset simulation
+          q.put(control_cmd_gen("reset"))
 
 if __name__ == '__main__':
   from multiprocessing import Process, Queue
-  q: Queue[str] = Queue()
+  q = Queue()
   p = Process(target=wheel_poll_thread, args=(q,))
   p.start()

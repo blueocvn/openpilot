@@ -12,7 +12,7 @@ import time
 import cereal.messaging as messaging
 from cereal import log
 from common.realtime import DT_DMON
-from tools.sim_carla.lib.camerad import Camerad
+from tools.sim.lib.camerad import Camerad
 
 SENSOR_ACCELEROMETER = 1
 SENSOR_GYRO_UNCALIBRATED = 5
