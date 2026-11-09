@@ -11,7 +11,7 @@
 #
 # Environment: CARLA_HEADLESS=1, CARLA_QUALITY=Low|High, CARLA_PORT=2000, CARLA_HOST=<ip>,
 #              CARLA_ROOT=/mnt/e/CARLA/0.9.12/WindowsNoEditor (reuse an existing install),
-#              WSL_DISTRO=Ubuntu-22.04, OP_UI=0|1, SKIP_BUILD=1
+#              WSL_DISTRO=Ubuntu-22.04, OP_UI=1 (default, openpilot UI) | 0 (bukapilot Qt UI), SKIP_BUILD=1
 set -euo pipefail
 
 SIM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,8 +35,12 @@ WSL_DISTRO="${WSL_DISTRO:-${WSL_DISTRO_NAME:-Ubuntu-22.04}}"
 default_gateway() { ip route show default 2>/dev/null | awk '{print $3; exit}'; }
 export CARLA_HOST="${CARLA_HOST:-$(default_gateway)}"
 export CARLA_PORT="${CARLA_PORT:-2000}"
-# bukapilot's own Qt UI opens through WSLg; OP_UI=1 selects openpilot's host UI (op_ui/host_ui.py).
-export OP_UI="${OP_UI:-0}"
+# Default UI is openpilot's current UI (op_ui/host_ui.py, run with the openpilot repo's .venv).
+# OP_UI=0 selects bukapilot's own Qt UI instead. Falls back to Qt if the openpilot .venv is missing.
+export OP_UI="${OP_UI:-1}"
+export OP_UI_PORT="${OP_UI_PORT:-8765}"
+OP_ROOT="$(cd "$ROOT/.." && pwd)"               # openpilot repo root (holds .venv)
+HOST_UI_PID=""
 
 windows_launcher() {
   local script_path extra=()
@@ -126,7 +130,33 @@ setup() {
   windows_launcher -Command setup
 }
 
+stop_host_ui() {
+  pkill -TERM -f 'op_ui/host_ui.py' 2>/dev/null || true
+  pkill -TERM -f 'lib/ui_relay.py' 2>/dev/null || true
+  pkill -TERM -f 'openpilot/selfdrive/ui/ui.py' 2>/dev/null || true
+}
+
+# Start openpilot's UI on this machine; bukapilot's ui process is blocked via OP_UI=1 (launch_openpilot.sh).
+start_host_ui() {
+  [ "$OP_UI" == "1" ] || return 0
+  if [ ! -x "$OP_ROOT/.venv/bin/python" ]; then
+    echo "openpilot venv not found at $OP_ROOT/.venv -> using bukapilot's Qt UI (OP_UI=0)." >&2
+    echo "  to get openpilot's UI: cd $OP_ROOT && uv sync --frozen --extra tools && scons -j\$(nproc)" >&2
+    export OP_UI=0
+    return 0
+  fi
+  stop_host_ui   # stale relays from an earlier run would fight over the port
+  sleep 1
+  mkdir -p "$STATE_ROOT/op_ui/logs"
+  PYTHONPATH="$OP_ROOT" "$OP_ROOT/.venv/bin/python" "$SIM_DIR/op_ui/host_ui.py" \
+    > "$STATE_ROOT/op_ui/logs/host_ui.log" 2>&1 &
+  HOST_UI_PID=$!
+  trap 'stop_host_ui; [ -n "$HOST_UI_PID" ] && kill "$HOST_UI_PID" 2>/dev/null || true' EXIT
+  echo "openpilot UI started (log: $STATE_ROOT/op_ui/logs/host_ui.log)"
+}
+
 start_bridge() {
+  start_host_ui
   build_libyuv
   build_bukapilot
   (cd "$SIM_DIR" && python3 ./run_bridge.py "$@") 2>&1 | tee "$LOG_ROOT/bridge.log"
@@ -157,6 +187,7 @@ case "${1:-all}" in
     pgrep -f 'tools/sim/run_bridge.py' >/dev/null && echo "CARLA bridge is running" || echo "CARLA bridge is not running"
     ;;
   stop)
+    stop_host_ui
     stop_bukapilot
     windows_launcher -Command stop
     ;;

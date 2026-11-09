@@ -26,6 +26,10 @@ OP_ROOT = os.environ.get("OPENPILOT_ROOT", os.path.abspath(os.path.join(os.path.
 STATE_DIR = os.environ.get("OP_UI_STATE", os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.carla/op_ui")))
 # keep the UI's params away from a real openpilot setup on this machine
 os.environ.setdefault("PARAMS_ROOT", os.path.join(STATE_DIR, "params"))
+# bukapilot's old msgq has no prefix and shares /dev/shm with this process now that Docker is gone;
+# the new msgq/visionipc honor OPENPILOT_PREFIX, so give the UI side its own namespace.
+os.environ.setdefault("OPENPILOT_PREFIX", "opui")
+os.makedirs("/dev/shm/msgq_" + os.environ["OPENPILOT_PREFIX"], exist_ok=True)  # msgq does not create it
 sys.path.insert(0, OP_ROOT)
 
 import numpy as np  # noqa: E402
