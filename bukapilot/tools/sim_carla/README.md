@@ -30,7 +30,7 @@ bash run.sh all --carla-town Town04_Opt --carla-spawn-point 16
 Lần đầu cần mở cổng tường lửa cho WSL (PowerShell **Administrator**):
 
 ```powershell
-& 'D:\openpilotukapilot	ools\sim_carlaun.ps1' -Command firewall-add -WslDistro Ubuntu-22.04
+& 'D:\openpilot\bukapilot\tools\sim_carla\run.ps1' -Command firewall-add -WslDistro Ubuntu-22.04
 ```
 
 Sau khi Windows/WSL khởi động lại mà bridge không nối được CARLA, tạo lại rule
