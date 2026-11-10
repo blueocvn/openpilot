@@ -74,7 +74,7 @@ def main():
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     manager_log = open(log_path, "w")
     print(f"bukapilot manager log: {log_path}", flush=True)
-    manager = subprocess.Popen(["./launch_openpilot.sh"], cwd=SIM_DIR, env=os.environ.copy(),
+    manager = subprocess.Popen(["bash", "./launch_openpilot.sh"], cwd=SIM_DIR, env=os.environ.copy(),
                                stdout=manager_log, stderr=subprocess.STDOUT, start_new_session=True)
 
   relay = None

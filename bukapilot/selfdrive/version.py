@@ -55,7 +55,10 @@ def get_origin(default: Optional[str] = None) -> Optional[str]:
 
 @cache
 def get_normalized_origin(default: Optional[str] = None) -> Optional[str]:
-  return get_origin()\
+  origin = get_origin(default)
+  if origin is None:
+    return default
+  return origin\
           .replace("git@", "", 1)\
           .replace(".git", "", 1)\
           .replace("https://", "", 1)\

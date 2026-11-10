@@ -155,8 +155,8 @@ class Translator:
     ss.active = cs["active"]
     ss.engageable = cs["engageable"]
     ss.state = cs["state"]
-    if cs["alertType"].startswith("startupMaster"):
-      # "WARNING: This branch is not tested" fills the screen and hides the camera; irrelevant in the sim
+    if cs["alertType"].startswith("startup"):
+      # startup banners ("be ready to take over...", "branch is not tested") fill the screen and hide the camera
       ss.alertText1 = ss.alertText2 = ss.alertType = ""
       ss.alertSize = "none"
       ss.alertStatus = "normal"
