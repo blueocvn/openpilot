@@ -108,6 +108,7 @@ Truyền sau `bash run.sh all`:
 | `--weather` | `ClearNoon` | `ClearNoon`, `CloudyNoon`, `WetNoon`, `MidRainyNoon`, `HardRainNoon`, `ClearSunset`, ... |
 | `--vehicle` | `vehicle.tesla.model3` | xe của mình |
 | `--low_quality` | tắt | gỡ cây, nhà, props cho nhẹ máy |
+| `--motorcycle` | tắt | thêm xe máy phía trước cùng làn (xem bên dưới) |
 | `--no-auto-engage` | tự engage | tự bấm `2` để engage |
 | `--duration N` | không | chạy N giây không cần bàn phím |
 | `--joystick` | tắt | điều khiển bằng vô-lăng/tay cầm |
@@ -116,13 +117,51 @@ Truyền sau `bash run.sh all`:
 
 ### Scenario và map
 
+**Đã hoàn thiện (2 kịch bản):**
+
 | Scenario | Map | `--carla-spawn-point` | Lệnh |
 |---|---|---|---|
 | Đường cong cao tốc (mặc định) | `Town04_Opt` | 16 | `bash run.sh all --carla-town Town04_Opt --carla-spawn-point 16` |
-| Thẳng tắp | `Town06` | `<N>` | `bash run.sh all --carla-town Town06 --carla-spawn-point <N>` |
-| Đường cong | `Town07` | `<N>` | `bash run.sh all --carla-town Town07 --carla-spawn-point <N>` |
-| Đường chữ L | `Town05_Opt` | `<N>` | `bash run.sh all --carla-town Town05_Opt --carla-spawn-point <N>` |
-| Có xe máy | bất kỳ | - | cần thêm spawn xe máy vào bridge |
+| Đường chữ L | `Town05_Opt` | 1 | `bash run.sh all --carla-town Town05_Opt --carla-spawn-point 1` |
+
+Lệnh mặc định `bash run.sh all` (không tham số) chạy đúng kịch bản đường cong cao tốc ở trên.
+
+**Thẳng tắp** dùng `Town04_Opt` điểm 170 (đã chạy ổn). `Town06`/`Town07` nằm trong gói AdditionalMaps,
+không có trong bản CARLA cơ bản nên không dùng. Lưu ý: chỉ số điểm xuất phát khác giữa CARLA 0.9.12
+và 0.9.16, ví dụ điểm 40 của `Town04_Opt` là đường cong ở 0.9.12 chứ không phải đường thẳng.
+
+| Scenario | Map | `--carla-spawn-point` | Lệnh |
+|---|---|---|---|
+| Thẳng tắp | `Town04_Opt` | 170 | `bash run.sh all --carla-town Town04_Opt --carla-spawn-point 170` |
+
+Các điểm khác cùng dạng (đổi hướng dưới 1° trong 300 m): 119–121, 150–153, 155–157, 174–176, 263–265.
+Đường cong khác (không có giao lộ): 17–19, 343–346 (cong khoảng 70°).
+
+**Nhiều xe máy** (đã viết, **chưa chạy thử với CARLA**): nhiều xe máy cùng chiều và ngược chiều, mỗi xe một
+tốc độ, để xem bukapilot xử lý ra sao. Do Traffic Manager của CARLA điều khiển (không đổi làn, bỏ qua đèn).
+Thêm `--motorcycle` vào bất kỳ kịch bản nào:
+
+| Scenario | Lệnh |
+|---|---|
+| Nhiều xe máy trên đường thẳng | `bash run.sh all --carla-town Town04_Opt --carla-spawn-point 170 --motorcycle` |
+| Nhiều xe máy trên đường cong | `bash run.sh all --carla-town Town04_Opt --carla-spawn-point 16 --motorcycle` |
+| Tự định nghĩa | `... --motorcycle-spec "same:40:25,oncoming:120:55"` |
+
+`--motorcycle` dùng bộ mặc định (7 xe):
+`same:35:20, same:75:45, left:25:60, right:50:35, oncoming:90:50, oncoming:160:30, oncoming:230:60`.
+
+Mỗi phần tử của `--motorcycle-spec` là `loại:khoảng_cách_m:tốc_độ_kmh`:
+
+| Loại | Ý nghĩa |
+|---|---|
+| `same` | cùng làn với xe mình, phía trước |
+| `left` / `right` | làn bên cạnh, cùng chiều |
+| `oncoming` | làn ngược chiều, đi về phía xe mình |
+
+`khoảng_cách_m` là số mét phía trước điểm xuất phát của xe mình (dọc hướng xe mình chạy). Nếu điểm xuất phát
+không có làn đó (ví dụ không có làn ngược chiều), xe máy đó bị bỏ qua và bridge in thông báo `skipped`.
+`--motorcycle-model` ép dùng một mẫu xe cho tất cả (mặc định xoay vòng `kawasaki.ninja`, `yamaha.yzf`,
+`harley-davidson.low_rider`). Phím `r` reset cả các xe máy về chỗ cũ.
 
 Các map khác: `Town01_Opt`, `Town02`, `Town03`, `Town10HD_Opt`.
 

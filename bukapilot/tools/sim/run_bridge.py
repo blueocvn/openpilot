@@ -16,6 +16,21 @@ if BASEDIR not in sys.path:
   sys.path.insert(0, BASEDIR)
 
 
+# kind:gap_m:speed_kph. gap is metres ahead of the ego spawn point; ego cruises well above these speeds,
+# so it catches the same-direction bikes and meets the oncoming ones head-on.
+DEFAULT_MOTORCYCLE_SPEC = "same:35:20,same:75:45,left:25:60,right:50:35,oncoming:90:50,oncoming:160:30,oncoming:230:60"
+
+
+def parse_motorcycle_spec(spec):
+  specs = []
+  for item in spec.split(','):
+    kind, gap, kph = item.strip().split(':')
+    if kind not in ('same', 'left', 'right', 'oncoming'):
+      raise ValueError(f"motorcycle kind '{kind}' must be same, left, right or oncoming")
+    specs.append((kind, float(gap), float(kph)))
+  return specs
+
+
 def parse_args(add_args=None):
   parser = argparse.ArgumentParser(description='Bridge between CARLA and bukapilot.')
   parser.add_argument('--joystick', action='store_true', help='read /dev/input/js0 instead of the keyboard')
@@ -27,6 +42,15 @@ def parse_args(add_args=None):
   parser.add_argument('--weather', default='ClearNoon', help='carla.WeatherParameters preset')
   parser.add_argument('--host', '--carla-host', dest='host', default=os.environ.get('CARLA_HOST', '127.0.0.1'))
   parser.add_argument('--port', '--carla-port', dest='port', type=int, default=int(os.environ.get('CARLA_PORT', '2000')))
+  parser.add_argument('--motorcycle', action='store_true',
+                      help='add motorcycles around the ego car (Traffic Manager autopilot): the default mix of '
+                           'same-direction and oncoming bikes at different speeds, see --motorcycle-spec')
+  parser.add_argument('--motorcycle-spec', default=None, metavar='KIND:GAP:KPH,...',
+                      help='custom motorcycles (implies --motorcycle): comma-separated kind:gap_m:speed_kph, kind is '
+                           'same | left | right | oncoming. Default: ' + DEFAULT_MOTORCYCLE_SPEC)
+  parser.add_argument('--motorcycle-model', default=None,
+                      help='one blueprint for all bikes (default: cycle through kawasaki.ninja, yamaha.yzf, '
+                           'harley-davidson.low_rider)')
   parser.add_argument('--no-auto-engage', dest='auto_engage', action='store_false',
                       help='do not press SET automatically; engage with key 2 (or 1)')
   parser.add_argument('--launch-openpilot', action='store_true',
@@ -62,7 +86,10 @@ def main():
   queue = Queue()
   bridge = CarlaBridge(host=args.host, port=args.port, town=args.town, spawn_point=args.spawn_point,
                        vehicle=args.vehicle, low_quality=args.low_quality, weather=args.weather,
-                       auto_engage=args.auto_engage, test_run=args.duration is not None)
+                       auto_engage=args.auto_engage, test_run=args.duration is not None,
+                       motorcycle=({"specs": parse_motorcycle_spec(args.motorcycle_spec or DEFAULT_MOTORCYCLE_SPEC),
+                                    "models": [args.motorcycle_model] if args.motorcycle_model else None}
+                                   if (args.motorcycle or args.motorcycle_spec) else None))
   bridge_p = bridge.run(queue)
   try:
     if args.duration is not None:

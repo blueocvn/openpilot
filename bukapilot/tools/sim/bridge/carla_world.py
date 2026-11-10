@@ -26,12 +26,15 @@ class CarlaWorld(World):
   ROAD_FOV = 40.0
 
   def __init__(self, status_q, host, port, town, spawn_point, vehicle="vehicle.tesla.model3",
-               low_quality=False, weather="ClearNoon"):
+               low_quality=False, weather="ClearNoon", motorcycle=None):
     super().__init__()
     import carla  # pylint: disable=import-error
     self.carla = carla
     self.status_q = status_q
     self.actors = []
+    self.traffic_manager = None
+    self.motorcycles = []
+    self.tick_count = 0
     self.camera_queue = queue.Queue(maxsize=4)
     self.latest_gnss = None
     self.latest_imu = None
@@ -80,6 +83,8 @@ class CarlaWorld(World):
     self._spawn_camera()
     self._spawn_sensor("sensor.other.gnss", lambda e: setattr(self, "latest_gnss", e))
     self._spawn_sensor("sensor.other.imu", lambda e: setattr(self, "latest_imu", e))
+    if motorcycle:
+      self._spawn_motorcycles(**motorcycle)
     self.spectator_mode = os.environ.get("CARLA_SPECTATOR_MODE", "chase")
     self._update_spectator()
 
@@ -93,6 +98,102 @@ class CarlaWorld(World):
       print(f"CARLA: loading {town} (was {current})", flush=True)
       world = self.client.load_world(town)
     return world
+
+  @staticmethod
+  def _free_port():
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+      s.bind(("", 0))
+      return s.getsockname()[1]
+
+  MOTORCYCLE_MODELS = ("vehicle.kawasaki.ninja", "vehicle.yamaha.yzf", "vehicle.harley-davidson.low_rider")
+
+  def _lane_waypoint(self, ego_wp, kind):
+    """(waypoint at the ego position in the lane for `kind`, oncoming?) or None if there is no such lane.
+
+    same: the ego lane. left/right: the adjacent lane going the same way. oncoming: the nearest lane going
+    the other way (CARLA towns are right-hand traffic, so it is reached by hopping left).
+    """
+    driving = self.carla.LaneType.Driving
+    if kind == "same":
+      return ego_wp, False
+    if kind in ("left", "right"):
+      wp = ego_wp.get_left_lane() if kind == "left" else ego_wp.get_right_lane()
+      if wp is not None and wp.lane_type == driving and (wp.lane_id > 0) == (ego_wp.lane_id > 0):
+        return wp, False
+      return None
+    wp = ego_wp
+    for _ in range(8):  # hop across lanes (and the median) until one drives the other way
+      wp = wp.get_left_lane()
+      if wp is None:
+        return None
+      if (wp.lane_id > 0) != (ego_wp.lane_id > 0) and wp.lane_type == driving:
+        return wp, True
+    return None
+
+  def _spawn_motorcycles(self, specs, models=None):
+    """Motorcycles around the ego car, driven by CARLA's Traffic Manager (no lane changes, ignoring lights).
+
+    specs: list of (kind, gap_m, speed_kph), kind in same | left | right | oncoming; gap_m is metres ahead of
+    the ego spawn point along the ego direction of travel. The TM runs in this process and needs
+    synchronous mode, which is already on for the world.
+    """
+    library = self.world.get_blueprint_library()
+    models = list(models or self.MOTORCYCLE_MODELS)
+    ego_wp = self.world.get_map().get_waypoint(self.spawn_transform.location)
+    # a fixed port (CARLA's default 8000) is often still held by a bridge from an earlier run: take a free one
+    tm = self.client.get_trafficmanager(int(os.environ.get("CARLA_TM_PORT") or self._free_port()))
+    tm.set_synchronous_mode(True)
+    self.traffic_manager = tm
+
+    for n, (kind, gap, speed_kph) in enumerate(specs):
+      label = f"#{n} {kind}:{gap:g}:{speed_kph:g}"
+      found = self._lane_waypoint(ego_wp, kind)
+      if found is None:
+        print(f"CARLA: motorcycle {label}: no {kind} lane at this spawn point, skipped", flush=True)
+        continue
+      lane_wp, oncoming = found
+      bp = library.find(models[n % len(models)])
+      if bp.has_attribute("role_name"):
+        bp.set_attribute("role_name", f"motorcycle_{n}")
+      bike = transform = None
+      for extra in range(0, 30, 5):  # the first free spot at or beyond the requested gap
+        d = float(gap) + extra
+        # "ahead of the ego car" is backwards along an oncoming lane
+        candidates = lane_wp.previous(d) if oncoming else lane_wp.next(d)
+        if not candidates:
+          continue
+        transform = candidates[0].transform
+        transform.location.z += 0.5  # drop it onto the road instead of spawning inside it
+        bike = self.world.try_spawn_actor(bp, transform)
+        if bike is not None:
+          break
+      if bike is None:
+        print(f"CARLA: motorcycle {label}: could not spawn, skipped", flush=True)
+        continue
+      self.actors.append(bike)
+      self.motorcycles.append({"actor": bike, "transform": transform, "speed_kph": float(speed_kph), "label": label})
+
+    self.world.tick()
+    for m in self.motorcycles:
+      bike = m["actor"]
+      bike.set_autopilot(True, tm.get_port())
+      tm.auto_lane_change(bike, False)
+      tm.ignore_lights_percentage(bike, 100)
+      tm.ignore_signs_percentage(bike, 100)
+    self._update_motorcycle_speeds()
+    print(f"CARLA: {len(self.motorcycles)}/{len(specs)} motorcycles: " + ", ".join(m["label"] for m in self.motorcycles),
+          flush=True)
+
+  def _update_motorcycle_speeds(self):
+    # The TM speed is "percent below the road's speed limit": recompute it from the limit where each bike is now.
+    for m in self.motorcycles:
+      bike = m["actor"]
+      if not bike.is_alive:
+        continue
+      limit = float(bike.get_speed_limit()) or 50.0  # km/h
+      pct = float(np.clip((1.0 - m["speed_kph"] / limit) * 100.0, -100.0, 100.0))
+      self.traffic_manager.vehicle_percentage_speed_difference(bike, pct)
 
   def _sensor_transform(self):
     return self.carla.Transform(self.carla.Location(x=self.CAMERA_X, z=self.CAMERA_Z))
@@ -152,6 +253,9 @@ class CarlaWorld(World):
     try:
       self.current_frame = self.world.tick()
       self._update_spectator()
+      self.tick_count += 1
+      if self.motorcycles and self.tick_count % 10 == 0:
+        self._update_motorcycle_speeds()
     except RuntimeError as exc:
       self.status_q.put(QueueMessage(QueueMessageType.TERMINATION_INFO, str(exc)))
       self.exit_event.set()
@@ -216,6 +320,10 @@ class CarlaWorld(World):
     self.vehicle.set_target_velocity(self.carla.Vector3D())
     self.vehicle.set_target_angular_velocity(self.carla.Vector3D())
     self.vehicle.set_transform(self.spawn_transform)
+    for m in self.motorcycles:
+      if m["actor"].is_alive:
+        m["actor"].set_target_velocity(self.carla.Vector3D())
+        m["actor"].set_transform(m["transform"])
     self.notify_reset()
 
   def close(self, reason: str):
@@ -224,6 +332,8 @@ class CarlaWorld(World):
     self.closed = True
     self.status_q.put(QueueMessage(QueueMessageType.CLOSE_STATUS, reason))
     self.exit_event.set()
+    if self.traffic_manager is not None:
+      self.traffic_manager.set_synchronous_mode(False)
     for actor in reversed(self.actors):
       if actor.is_alive:
         if hasattr(actor, "stop"):

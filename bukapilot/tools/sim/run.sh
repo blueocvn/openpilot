@@ -189,6 +189,7 @@ start_host_ui() {
 }
 
 start_bridge() {
+  stop_bukapilot   # a leftover manager from an earlier run would publish the same topics (MultiplePublishersError)
   setup_pocl
   use_pocl
   start_host_ui
@@ -198,11 +199,28 @@ start_bridge() {
   return "${PIPESTATUS[0]}"
 }
 
+# launch_openpilot.sh runs `exec ./manager.py` from selfdrive/manager, so its command line has no
+# absolute path: find bukapilot's manager by its working directory instead of the script path.
+manager_pids() {
+  local p
+  for p in $(pgrep -f 'manager\.py' 2>/dev/null); do
+    [ "$(readlink "/proc/$p/cwd" 2>/dev/null)" == "$ROOT/selfdrive/manager" ] && echo "$p"
+  done
+  return 0
+}
+
 stop_bukapilot() {
-  pkill -TERM -f "$ROOT/selfdrive/manager/manager.py" 2>/dev/null || true
+  local pid sid sids=""
+  # remember each manager's session: all its children (modeld, controlsd, the Qt ui, ...) share it
+  for pid in $(manager_pids); do
+    sid="$(ps -o sid= -p "$pid" 2>/dev/null | tr -d ' ')"
+    [ -n "$sid" ] && sids="$sids $sid"
+  done
+  for pid in $(manager_pids); do kill -TERM "$pid" 2>/dev/null || true; done
   pkill -TERM -f 'tools/sim/run_bridge.py' 2>/dev/null || true
   sleep 2
-  pkill -KILL -f "$ROOT/selfdrive/manager/manager.py" 2>/dev/null || true
+  for pid in $(manager_pids); do kill -KILL "$pid" 2>/dev/null || true; done
+  for sid in $sids; do pkill -KILL -s "$sid" 2>/dev/null || true; done
   pkill -KILL -f 'tools/sim/run_bridge.py' 2>/dev/null || true
 }
 
@@ -218,7 +236,7 @@ case "${1:-all}" in
     ;;
   status)
     windows_launcher -Command status || true
-    pgrep -f "$ROOT/selfdrive/manager/manager.py" >/dev/null && echo "bukapilot manager is running" || echo "bukapilot manager is not running"
+    [ -n "$(manager_pids)" ] && echo "bukapilot manager is running" || echo "bukapilot manager is not running"
     pgrep -f 'tools/sim/run_bridge.py' >/dev/null && echo "CARLA bridge is running" || echo "CARLA bridge is not running"
     ;;
   stop)
