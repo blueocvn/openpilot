@@ -125,9 +125,42 @@ setup() {
     libqt5sql5-sqlite libqt5svg5-dev libqt5x11extras5-dev \
     libreadline-dev libdw1 valgrind tmux dbus libx11-6 pocl-opencl-icd
   install_python_env
+  setup_pocl
   build_libyuv
   build_bukapilot
   windows_launcher -Command setup
+}
+
+# bukapilot's modeld needs OpenCL. The distro's pocl 1.8 (LLVM 11) cannot build kernels on new CPUs
+# ("unknown target CPU 'generic'", e.g. Ryzen 9 9950X3D) and WSL has no NVIDIA OpenCL driver, so use
+# pocl 7.x (LLVM 19) from conda-forge via micromamba, installed per user and only exposed to bukapilot
+# through OCL_ICD_VENDORS (no LD_LIBRARY_PATH, so the system libs stay untouched). OPENCL_POCL=0 skips it.
+POCL_ENV="$HOME/micromamba/envs/pocl"
+OCL_VENDORS_DIR="$WSL_CACHE_ROOT/opencl-vendors"
+
+setup_pocl() {
+  [ "${OPENCL_POCL:-1}" == "1" ] || return 0
+  ls "$POCL_ENV"/lib/libpocl.so.* >/dev/null 2>&1 && return 0
+  export MAMBA_ROOT_PREFIX="$HOME/micromamba"
+  mkdir -p "$HOME/.local/bin"
+  if [ ! -x "$HOME/.local/bin/micromamba" ]; then
+    (cd /tmp && curl -fsSL https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj bin/micromamba \
+      && mv bin/micromamba "$HOME/.local/bin/micromamba")
+  fi
+  "$HOME/.local/bin/micromamba" create -y -n pocl -c conda-forge pocl ocl-icd clinfo
+}
+
+use_pocl() {
+  [ "${OPENCL_POCL:-1}" == "1" ] || return 0
+  local lib
+  lib="$(ls "$POCL_ENV"/lib/libpocl.so.* 2>/dev/null | head -1)"
+  if [ -z "$lib" ]; then
+    echo "pocl 7.x not installed -> modeld may fail on new CPUs. Run: bash run.sh setup" >&2
+    return 0
+  fi
+  mkdir -p "$OCL_VENDORS_DIR"
+  echo "$lib" > "$OCL_VENDORS_DIR/pocl-conda.icd"
+  export OCL_ICD_VENDORS="$OCL_VENDORS_DIR"
 }
 
 stop_host_ui() {
@@ -156,6 +189,8 @@ start_host_ui() {
 }
 
 start_bridge() {
+  setup_pocl
+  use_pocl
   start_host_ui
   build_libyuv
   build_bukapilot

@@ -155,11 +155,17 @@ class Translator:
     ss.active = cs["active"]
     ss.engageable = cs["engageable"]
     ss.state = cs["state"]
-    ss.alertText1 = cs["alertText1"]
-    ss.alertText2 = cs["alertText2"]
-    ss.alertSize = cs["alertSize"]
-    ss.alertStatus = cs["alertStatus"]
-    ss.alertType = cs["alertType"]
+    if cs["alertType"].startswith("startupMaster"):
+      # "WARNING: This branch is not tested" fills the screen and hides the camera; irrelevant in the sim
+      ss.alertText1 = ss.alertText2 = ss.alertType = ""
+      ss.alertSize = "none"
+      ss.alertStatus = "normal"
+    else:
+      ss.alertText1 = cs["alertText1"]
+      ss.alertText2 = cs["alertText2"]
+      ss.alertSize = cs["alertSize"]
+      ss.alertStatus = cs["alertStatus"]
+      ss.alertType = cs["alertType"]
     self.pm.send('selfdriveState', dat)
 
     dat = messaging.new_message('controlsState', valid=True)
