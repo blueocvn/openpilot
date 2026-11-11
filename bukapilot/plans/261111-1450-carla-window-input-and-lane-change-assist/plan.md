@@ -101,3 +101,27 @@ Phase 4 has not yet gone through the verification roles; its file and line claim
 
 ### Session 3 (2026-11-11), speed gate decision
 The user chose to raise the car and motorcycle speeds temporarily instead of changing any threshold. Phase 3 was rewritten (renamed `phase-03-scenario-speeds-docs-tests.md`); `ALC_MIN_SPEED_KPH` is dropped. Phase 4 no longer depends on phase 3. Open item: whether CARLA lets the motorcycle exceed the road speed limit (checked in the first run).
+
+### Session 4 (2026-11-11), phase 4 validation
+**Verification Results**
+- **Tier:** Standard (Fact Checker + Contract Verifier), phase 4 only
+- **Claims checked:** 14
+- **Verified:** 10 | **Failed:** 4 | **Unverified:** 0 (all 4 corrected in phase 4)
+
+#### Failures (corrected)
+1. [Fact Checker] `long_mpc.py:332-340` for the lead use: actual `343-352`, and it covers `leadOne` and `leadTwo` plus `status`, the braking limit and the crash counter. Requirement 2 now ignores all of them.
+2. [Fact Checker] `plannerd.py:41-45` should be `38-42`.
+3. [Fact Checker] "braking stays within `A_CRUISE_MIN`" is wrong when a lead exists: the MPC limit is `MIN_ACCEL` -3.5 m/s². Wording corrected; peak deceleration is now recorded in the simulator run.
+4. [Contract Verifier] `Planner.update(sm)` has two callers (`plannerd.py:41`, `selfdrive/test/longitudinal_maneuvers/plant.py:48`) and `LongitudinalMpc.update` one (`longitudinal_planner.py:91`). New arguments must be optional so the maneuver test plant is unaffected.
+
+#### Verified
+`long_mpc.py:61,63,80-84,344,370`, `longitudinal_planner.py:19-21`, `bridge/common.py:56`, `lateral_planner.py:17` (`self.DH`), and the loop order lateral-then-longitudinal in `plannerd.py`.
+
+**Question and answer**
+- Lead handling while crossing: ignore the lead except below the 1.0 s floor (recommended option, confirmed by the user).
+
+### Whole-Plan Consistency Sweep
+- Files reread: plan.md, phase-01 to phase-04
+- Decision deltas checked: 4
+- Reconciled stale references: 4
+- Unresolved contradictions: 0
