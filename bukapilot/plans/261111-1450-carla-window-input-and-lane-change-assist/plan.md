@@ -1,6 +1,6 @@
 ---
 title: CARLA window input and blinker lane-change assist
-status: pending
+status: implemented, simulator run pending
 mode: fast
 created: 2026-11-11
 platform: tools/sim-linux-docker (Linux Docker, X11)
@@ -125,3 +125,9 @@ The user chose to raise the car and motorcycle speeds temporarily instead of cha
 - Decision deltas checked: 4
 - Reconciled stale references: 4
 - Unresolved contradictions: 0
+
+## Implementation Log (2026-11-11)
+
+All four phases are implemented and not committed. Offline checks passed inside the running `bukapilot_sim_carla` container: 26 unit tests (existing plus `tools/sim/tests/test_sim_input.py`), the 6 longitudinal maneuver tests with the default environment and with `ALC_GAP_TF=3.0`, and a live X11 read (13 of 13 keys mapped, the CARLA window title `CarlaUE4` matches, the poll thread starts). A direct probe of the MPC at 60 km/h confirmed the intended effect: with the lead ignored the car may accelerate up to +1.20 m/s² against +0.11 with the lead; a lead closer than the 1.0 s floor is kept; a 3.0 s headway gives a 39.0 m gap against 15.7 m.
+
+Not done: the end-to-end scenario run (blinker, nudge, lane change past a 60 km/h motorcycle) and its report, because that needs the user's running CARLA session to be restarted. The longitudinal maneuver test needs `StoppingDistanceOffset` in the params store; it fails the same way on the original code, so it was run with that parameter faked.

@@ -4,15 +4,19 @@ import numpy as np
 from common.numpy_fast import interp
 
 import cereal.messaging as messaging
+from cereal import log
 from common.filter_simple import FirstOrderFilter
 from common.realtime import DT_MDL
 from selfdrive.modeld.constants import T_IDXS
 from selfdrive.config import Conversions as CV
 from selfdrive.controls.lib.longcontrol import LongCtrlState
-from selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc
+from selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc, get_desired_tf
+from selfdrive.controls.lib.lane_change_gap import LaneChangeGap
 from selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
 from selfdrive.controls.lib.drive_helpers import V_CRUISE_MAX, CONTROL_N
 from selfdrive.swaglog import cloudlog
+
+LaneChangeState = log.LateralPlan.LaneChangeState
 
 LON_MPC_STEP = 0.2  # first step is 0.2s
 AWARENESS_DECEL = -0.2  # car smoothly decel at .2m/s^2 when user is distracted
@@ -46,6 +50,7 @@ class Planner:
   def __init__(self, CP, init_v=0.0, init_a=0.0):
     self.CP = CP
     self.mpc = LongitudinalMpc()
+    self.lane_change_gap = LaneChangeGap()
 
     self.fcw = False
 
@@ -56,7 +61,7 @@ class Planner:
     self.a_desired_trajectory = np.zeros(CONTROL_N)
     self.j_desired_trajectory = np.zeros(CONTROL_N)
 
-  def update(self, sm):
+  def update(self, sm, lane_change_state=None):
     v_ego = sm['carState'].vEgo
     a_ego = sm['carState'].aEgo
 
@@ -88,7 +93,15 @@ class Planner:
     accel_limits_turns[1] = max(accel_limits_turns[1], self.a_desired - 0.05)
     self.mpc.set_accel_limits(accel_limits_turns[0], accel_limits_turns[1])
     self.mpc.set_cur_state(self.v_desired_filter.x, self.a_desired)
-    self.mpc.update(sm['carState'], sm['radarState'], v_cruise, prev_accel_constraint=prev_accel_constraint)
+    desired_tf, ignore_lead = None, False
+    if self.lane_change_gap.enabled and lane_change_state is not None:
+      cs = sm['carState']
+      crossing = lane_change_state in (LaneChangeState.laneChangeStarting, LaneChangeState.laneChangeFinishing)
+      desired_tf, ignore_lead = self.lane_change_gap.update(
+        get_desired_tf(cs.cruiseState.setDistance), cs.leftBlinker != cs.rightBlinker,
+        sm['controlsState'].active, crossing, DT_MDL)
+    self.mpc.update(sm['carState'], sm['radarState'], v_cruise, prev_accel_constraint=prev_accel_constraint,
+                    desired_tf=desired_tf, ignore_lead=ignore_lead)
     self.v_desired_trajectory = np.interp(T_IDXS[:CONTROL_N], T_IDXS_MPC, self.mpc.v_solution)
     self.a_desired_trajectory = np.interp(T_IDXS[:CONTROL_N], T_IDXS_MPC, self.mpc.a_solution)
     self.j_desired_trajectory = np.interp(T_IDXS[:CONTROL_N], T_IDXS_MPC[:-1], self.mpc.j_solution)

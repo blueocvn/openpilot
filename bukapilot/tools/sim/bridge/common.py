@@ -21,6 +21,7 @@ from multiprocessing import Process, Value
 import numpy as np
 
 import cereal.messaging as messaging
+from cereal import log
 from common.realtime import Ratekeeper
 from selfdrive.car.honda.values import CruiseButtons
 from tools.sim.lib.common import SimulatorState
@@ -38,6 +39,53 @@ class QueueMessageType(Enum):
 
 def control_cmd_gen(cmd: str):
   return QueueMessage(QueueMessageType.CONTROL_COMMAND, cmd)
+
+
+def toggle_blinker(current, requested):
+  """z / x latch a blinker on; pressing the same key again turns it off, the other key switches side."""
+  return None if current == requested else requested
+
+
+def update_blinker_latch(latch, lane_change_seen, lane_change_off):
+  """Turn the latched blinker off once a lane change that started has returned to off.
+
+  Returns (latch, lane_change_seen). The latch is never cleared before the lane change has left `off`.
+  """
+  if latch is None:
+    return None, False
+  if not lane_change_off:
+    return latch, True
+  if lane_change_seen:
+    return None, False
+  return latch, False
+
+
+def plan_manual_routing(manual_active, steer, throttle, brake, blinker, engaged):
+  """Which parts of a manual key press override openpilot: (pedals_manual, steering_manual).
+
+  With a blinker latched and the car engaged, a steer key in the blinker's direction is only a nudge
+  (steering torque goes to the car, openpilot keeps steering). Steer keys: a = -0.15 (left), d = +0.15.
+  Anything else keeps the previous behaviour: any key press overrides everything.
+  """
+  nudge = (manual_active and engaged and steer != 0 and
+           ((blinker == "left" and steer < 0) or (blinker == "right" and steer > 0)))
+  if nudge:
+    return (throttle != 0 or brake != 0), False
+  return manual_active, manual_active
+
+
+LONG_PRESS_FRAMES = 55    # controlsd adds 5 km/h after 50 frames of a held button
+SHORT_PRESS_FRAMES = 10   # one press adds 1 km/h
+CRUISE_PRESS_GAP = 25     # idle frames between presses
+
+
+def next_cruise_press(v_cruise, target):
+  """Frames to hold RES+ to move the set speed toward `target` (long press +5, short press +1), or None."""
+  if target - v_cruise >= 5:
+    return LONG_PRESS_FRAMES
+  if target - v_cruise >= 1:
+    return SHORT_PRESS_FRAMES
+  return None
 
 
 def rk_loop(function, hz, exit_event: threading.Event):
@@ -65,7 +113,7 @@ class SimulatorBridge(ABC):
   MANUAL_TIMEOUT = 0.25         # s a manual input stays applied after the last key event
   HELD_INPUT_FRAMES = 10        # frames a cruise button / blinker key stays pressed
 
-  def __init__(self, auto_engage=True, test_run=False):
+  def __init__(self, auto_engage=True, test_run=False, cruise_kph=None):
     set_params_enabled()
 
     self.rk = Ratekeeper(100, None)
@@ -89,8 +137,13 @@ class SimulatorBridge(ABC):
     # Key presses are single events; hold them on the bus long enough that the
     # independent 100 Hz CAN thread and carstate both see them.
     self.held_button = 0
-    self.held_blinker = None
     self.held_frames = 0
+    # one-shot: after engaging, raise the set speed to this value (the engage default is only 40 km/h)
+    self.cruise_kph_pending = cruise_kph
+    self.cruise_press_wait = 0
+    # z / x latch the blinker (ALC needs it to stay on); cleared again when the lane change it started ends
+    self.blinker = None
+    self.lane_change_seen = False
 
   def reset_engagement(self):
     self.past_startup_engaged = False
@@ -149,12 +202,13 @@ class SimulatorBridge(ABC):
       self.held_button = {"down": CruiseButtons.DECEL_SET, "up": CruiseButtons.RES_ACCEL,
                           "cancel": CruiseButtons.CANCEL, "main": CruiseButtons.MAIN}.get(m[1], 0)
       self.held_frames = self.HELD_INPUT_FRAMES
+      self.cruise_kph_pending = None  # a manual cruise key takes over from the automatic ramp
       if m[1] == "cancel":
         # an explicit cancel also stops auto-engage from re-engaging right away
         self.past_startup_engaged = True
     elif m[0] == "blinker":
-      self.held_blinker = m[1]
-      self.held_frames = self.HELD_INPUT_FRAMES
+      self.blinker = toggle_blinker(self.blinker, m[1])
+      self.lane_change_seen = False
     elif m[0] == "ignition":
       s.ignition = not s.ignition
     elif m[0] == "hold":
@@ -163,6 +217,7 @@ class SimulatorBridge(ABC):
     elif m[0] == "reset":
       self.world.reset()
       self.reset_engagement()
+      self.blinker, self.lane_change_seen = None, False
     elif m[0] == "quit":
       return False
     return True
@@ -197,7 +252,7 @@ class SimulatorBridge(ABC):
     self.simulated_car = SimulatedCar()
     self.simulated_sensors = SimulatedSensors()
     # The car thread has its own SubMaster; never share one across threads.
-    self.sm = messaging.SubMaster(['carState', 'carControl', 'controlsState'])
+    self.sm = messaging.SubMaster(['carState', 'carControl', 'controlsState', 'lateralPlan'])
 
     self._exit_event = threading.Event()
     threading.Thread(target=rk_loop, daemon=True,
@@ -227,10 +282,14 @@ class SimulatorBridge(ABC):
       if self.held_frames > 0:
         self.held_frames -= 1
         s.cruise_button = self.held_button
-        s.left_blinker = self.held_blinker == "left"
-        s.right_blinker = self.held_blinker == "right"
       else:
-        self.held_button, self.held_blinker = 0, None
+        self.held_button = 0
+
+      self.sm.update(0)
+      lc_off = self.sm['lateralPlan'].laneChangeState == log.LateralPlan.LaneChangeState.off
+      self.blinker, self.lane_change_seen = update_blinker_latch(self.blinker, self.lane_change_seen, lc_off)
+      s.left_blinker = self.blinker == "left"
+      s.right_blinker = self.blinker == "right"
 
       s.user_brake = self.manual_brake
       s.user_gas = self.manual_throttle
@@ -238,14 +297,25 @@ class SimulatorBridge(ABC):
 
       self.simulated_sensors.update(s)
 
-      self.sm.update(0)
       cs = self.sm['controlsState']
       s.is_engaged = cs.active
+      pedals_manual, steer_manual = plan_manual_routing(manual_control_active, self.manual_steer, self.manual_throttle,
+                                                        self.manual_brake, self.blinker, s.is_engaged)
+
+      if self.cruise_press_wait > 0:
+        self.cruise_press_wait -= 1
+      elif self.cruise_kph_pending and s.is_engaged and self.held_frames == 0:
+        frames = next_cruise_press(cs.vCruise, self.cruise_kph_pending)
+        if frames is None:
+          self.cruise_kph_pending = None
+        else:
+          self.held_button, self.held_frames = CruiseButtons.RES_ACCEL, frames
+          self.cruise_press_wait = frames + CRUISE_PRESS_GAP
 
       throttle_op = brake_op = 0.0
       steer_op = 0.0
       if s.is_engaged:
-        throttle_op, brake_op = self._openpilot_longitudinal(manual_control_active)
+        throttle_op, brake_op = self._openpilot_longitudinal(pedals_manual)
         steer_op = rate_limit(self.last_steer, self.sm['carControl'].actuators.steeringAngleDeg, self.STEER_RATE_LIMIT)
         self.past_startup_engaged = True
       elif (self.auto_engage and not self.past_startup_engaged and cs.engageable and not self.hold_car
@@ -257,9 +327,13 @@ class SimulatorBridge(ABC):
       if self.hold_car and not manual_control_active:
         throttle_out, brake_out, steer_out = 0.0, 1.0, 0.0
       elif manual_control_active:
-        # keyboard/joystick is a simulator override and always wins
-        throttle_out, brake_out = self.manual_throttle, self.manual_brake
-        steer_out = self.manual_steer * self.MANUAL_STEER_DEG
+        # keyboard/joystick is a simulator override and always wins, except that a steer key pressed in the
+        # direction of a latched blinker is only a nudge: openpilot keeps steering the lane change
+        if pedals_manual:
+          throttle_out, brake_out = self.manual_throttle, self.manual_brake
+        else:
+          throttle_out, brake_out = throttle_op, brake_op
+        steer_out = self.manual_steer * self.MANUAL_STEER_DEG if steer_manual else steer_op
       elif s.is_engaged:
         throttle_out, brake_out, steer_out = throttle_op, brake_op, steer_op
       else:

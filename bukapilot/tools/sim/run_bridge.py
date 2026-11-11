@@ -8,6 +8,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 from multiprocessing import Queue
 
 SIM_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -51,6 +52,10 @@ def parse_args(add_args=None):
   parser.add_argument('--motorcycle-model', default=None,
                       help='one blueprint for all bikes (default: cycle through kawasaki.ninja, yamaha.yzf, '
                            'harley-davidson.low_rider)')
+  parser.add_argument('--no-carla-keys', dest='carla_keys', action='store_false',
+                      help='do not read keys from the CARLA window (Linux Docker); use the terminal only')
+  parser.add_argument('--cruise-kph', type=float, default=None, metavar='KPH',
+                      help='after engaging, raise the cruise set speed to this value (engaging at standstill sets only 40 km/h)')
   parser.add_argument('--no-auto-engage', dest='auto_engage', action='store_false',
                       help='do not press SET automatically; engage with key 2 (or 1)')
   parser.add_argument('--launch-openpilot', action='store_true',
@@ -86,7 +91,7 @@ def main():
   queue = Queue()
   bridge = CarlaBridge(host=args.host, port=args.port, town=args.town, spawn_point=args.spawn_point,
                        vehicle=args.vehicle, low_quality=args.low_quality, weather=args.weather,
-                       auto_engage=args.auto_engage, test_run=args.duration is not None,
+                       auto_engage=args.auto_engage, test_run=args.duration is not None, cruise_kph=args.cruise_kph,
                        motorcycle=({"specs": parse_motorcycle_spec(args.motorcycle_spec or DEFAULT_MOTORCYCLE_SPEC),
                                     "models": [args.motorcycle_model] if args.motorcycle_model else None}
                                    if (args.motorcycle or args.motorcycle_spec) else None))
@@ -100,6 +105,9 @@ def main():
       wheel_poll_thread(queue)
     else:
       from tools.sim.lib.keyboard_ctrl import keyboard_poll_thread
+      if args.carla_keys and os.environ.get("CARLA_KEYS", "1") != "0" and os.environ.get("DISPLAY"):
+        from tools.sim.lib.x11_keys import x11_key_poll_thread
+        threading.Thread(target=x11_key_poll_thread, args=(queue,), daemon=True).start()
       keyboard_poll_thread(queue)
     bridge_p.join(30)
   finally:

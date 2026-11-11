@@ -33,6 +33,9 @@ bash run.sh all --carla-town Town04_Opt --carla-spawn-point 16 --motorcycle
 # Xe máy tự định nghĩa (loại:khoảng_cách_m:tốc_độ_kmh; loại = same|left|right|oncoming)
 bash run.sh all --carla-town Town04_Opt --carla-spawn-point 170 --motorcycle-spec "same:40:25,oncoming:120:55"
 
+# Thử đổi làn để vượt một xe máy (xem mục "Đổi làn bằng xi-nhan" bên dưới)
+ALC_GAP_TF=3.0 bash run.sh all --carla-town Town04_Opt --carla-spawn-point 170 --motorcycle-spec "same:40:60" --cruise-kph 80
+
 # Map khác
 bash run.sh all --carla-town Town03 --carla-spawn-point <N>
 ```
@@ -87,6 +90,9 @@ CARLA_QUALITY=Low YELLOW_PATH=1 bash run.sh all --carla-town Town04_Opt --carla-
 | `OP_UI` | `0` / `1` | `1` nếu có `/home/ubuntu/openpilot/.venv`, không thì `0` | `1`: UI openpilot trên host; `0`: UI Qt của bukapilot |
 | `OP_UI_PORT` | số cổng | `8765` | cổng relay giữa bukapilot và UI openpilot |
 | `YELLOW_PATH` | `0` / `1` | `0` | `1`: đường đi màu vàng, giống `--yellow-path` (chỉ có tác dụng với `OP_UI=1`) |
+| `ALC_GAP_TF` | số giây, ví dụ `3.0` | không đặt (tắt) | khi xi-nhan bật, xe giãn khoảng cách bám lên mức này trước khi đổi làn, rồi tăng tốc lúc đang chuyển làn (xem mục đổi làn) |
+| `CARLA_KEYS` | `0` / `1` | `1` | `0`: không đọc phím từ cửa sổ CARLA, chỉ dùng terminal |
+| `CARLA_WINDOW_TITLE` | danh sách cách nhau bằng dấu phẩy | `CarlaUE4,=UI` | tên cửa sổ nhận phím: `CarlaUE4` khớp một phần tên, `=UI` khớp đúng tên `UI` |
 | `SKIP_BUILD` | `1` | không đặt | bỏ qua `scons` khi khởi động bridge |
 | `SHELL_ONLY` | `1` | không đặt | chỉ mở shell trong container bukapilot |
 | `IMAGE` | tên image | `bukapilot-sim:local` | image chạy bukapilot và bridge |
@@ -105,12 +111,38 @@ docker logs carla_server
 
 ## Phím điều khiển
 
+Phím dùng được ngay trong cửa sổ CARLA và cửa sổ `UI` của openpilot (bấm vào một trong hai rồi gõ), và vẫn dùng được ở terminal.
+Phím gõ ở cửa sổ khác không có tác dụng. Chỉ chạy trên Docker/X11; `CARLA_KEYS=0` để tắt.
+
 | Phím | Chức năng |
 |---|---|
 | 1 / 2 / 3 | cruise RES+ / SET- / cancel |
-| w a s d | ga / lái trái / phanh / lái phải |
-| z / x | xi-nhan trái / phải |
+| w a s d | ga / lái trái / phanh / lái phải (giữ phím được) |
+| z / x | xi-nhan trái / phải. Bấm một lần để bật và giữ, bấm lại để tắt, bấm phím bên kia để đổi bên |
 | h | giữ / thả xe |
 | i | bật/tắt ignition |
 | r | reset về điểm xuất phát |
 | q | thoát |
+
+## Đổi làn bằng xi-nhan
+
+Xe dùng tính năng đổi làn có hỗ trợ (ALC) sẵn có của bukapilot, chưa có chế độ tự quyết định vượt.
+
+1. Bấm `z` (trái) hoặc `x` (phải): xi-nhan bật và được giữ.
+2. Khi xe đang chạy bằng openpilot, bấm `a` (trái) hoặc `d` (phải) cùng hướng xi-nhan để "đánh lái nhẹ".
+   Lúc này phím chỉ gửi lực tay lái, còn openpilot tự lái và đổi làn. Bấm ngược hướng, hoặc khi
+   không có xi-nhan, phím vẫn lái tay như trước.
+3. Đổi làn xong thì xi-nhan tự tắt. Bấm `z` / `x` lần nữa để tắt tay.
+
+**Điều kiện:** ALC chỉ bắt đầu khi xe chạy từ khoảng 48,3 km/h (30 mph) trở lên
+(`LANE_CHANGE_SPEED_MIN` trong `selfdrive/controls/lib/desire_helper.py`). Dưới mức này xi-nhan còn làm
+xe ngừng tự lái ngang. Vì vậy để thử vượt, cho xe máy chạy nhanh hơn (ví dụ 60 km/h) và đặt tốc độ cruise
+của xe từ 80 km/h trở lên: thêm `--cruise-kph 80` vào lệnh (sau khi engage, bridge tự giữ nút RES+ để đưa `vCruise` lên mức đó; engage lúc xe đứng yên chỉ đặt 40 km/h). Có thể bấm `1` tay, mỗi lần chỉ +1 km/h, giữ lâu hơn 0,5 s thì +5 km/h; xem dòng `vCruise=` trong log.
+Mô phỏng này không báo điểm mù: tự nhìn làn bên trước khi đổi làn, và không đặt xe máy ở làn trái khi thử.
+
+**Mở khoảng cách (`ALC_GAP_TF`):** không đặt thì không có gì thay đổi. Khi đặt (ví dụ `3.0`):
+- Xi-nhan bật, chưa đổi làn: khoảng cách bám theo xe trước tăng dần lên mức `ALC_GAP_TF` giây.
+  Phím đánh lái nhẹ vẫn đổi làn ngay cả khi khoảng cách chưa đủ.
+- Đang chuyển làn: xe không bị xe máy ở làn cũ giữ lại nên tăng tốc được. Nếu xe máy gần hơn khoảng cách
+  ứng với 1,0 s thì vẫn giữ lại.
+- Đổi làn xong: khoảng cách về mức bình thường trong khoảng 2 giây.

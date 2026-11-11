@@ -24,9 +24,13 @@ KEYBOARD_HELP = """
   |  r   | Reset simulation       |
   |  i   | Toggle ignition        |
   |  h   | Hold / release car     |
-  |  z/x | Left / right blinker   |
+  |  z/x | Left / right blinker (latched: press again to turn off) |
   |  q   | Exit all               |
   | wasd | Control manually       |
+
+  These keys also work while the CARLA window has focus (Linux Docker).
+  With a blinker on and the car engaged, a/d in the blinker's direction only
+  nudges the steering wheel: openpilot does the lane change (assisted lane change).
 """
 
 KEY_COMMANDS = {

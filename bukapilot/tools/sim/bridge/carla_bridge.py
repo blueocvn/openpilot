@@ -14,8 +14,8 @@ class CarlaBridge(SimulatorBridge):
 
   def __init__(self, host="127.0.0.1", port=2000, town="Town04_Opt", spawn_point=16,
                vehicle="vehicle.tesla.model3", low_quality=False, weather="ClearNoon",
-               auto_engage=True, test_run=False, motorcycle=None):
-    super().__init__(auto_engage=auto_engage, test_run=test_run)
+               auto_engage=True, test_run=False, motorcycle=None, cruise_kph=None):
+    super().__init__(auto_engage=auto_engage, test_run=test_run, cruise_kph=cruise_kph)
     self.motorcycle = motorcycle  # None, or {"specs": [(kind, gap_m, speed_kph), ...], "models": [blueprint] | None}
     self.host = host
     self.port = port

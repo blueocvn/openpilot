@@ -11,6 +11,8 @@
 # Environment: CARLA_HEADLESS=1, CARLA_QUALITY=Low|High (default High), CARLA_PORT=2000,
 #              OP_UI=1 (openpilot UI on the host) | 0 (bukapilot Qt UI). Default: 1 if <openpilot>/.venv exists, else 0.
 #              SKIP_BUILD=1 (skip scons), SHELL_ONLY=1, YELLOW_PATH=1 (same as --yellow-path; OP_UI=1 only).
+#              ALC_GAP_TF=3.0 (blinker opens a larger gap behind the lead, then the car accelerates through the lane
+#              change), CARLA_KEYS=0 (no keys from the CARLA window), CARLA_WINDOW_TITLE (default CarlaUE4,=UI).
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
