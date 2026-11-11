@@ -1,0 +1,11 @@
+# carlasim/carla:0.9.16 only ships what -RenderOffScreen needs. Opening the CARLA window
+# also needs the Vulkan loader and the X11 libs SDL loads at runtime.
+# run.sh builds this automatically the first time:
+#   docker build -t carla-sim:0.9.16 -f Dockerfile.carla .
+FROM carlasim/carla:0.9.16
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libvulkan1 libxcursor1 libxi6 libxinerama1 libxss1 libxrandr2 libxxf86vm1 xdg-user-dirs \
+ && rm -rf /var/lib/apt/lists/*
+USER carla
