@@ -7,6 +7,7 @@
 #   CARLA_HEADLESS=1 ./start_carla.sh  # off-screen, like tools/sim/start_carla.sh
 #   CARLA_QUALITY=Low ./start_carla.sh
 #   CARLA_DETACH=1 ./start_carla.sh    # background (docker logs -f carla_server)
+#   CARLA_NO_ASSET_PATCH=1 ./start_carla.sh   # stock CARLA assets (skip carla-assets/)
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 NAME="${CARLA_NAME:-carla_server}"
@@ -39,6 +40,15 @@ if [ -n "$(docker ps -aq --filter "name=^${NAME}$")" ]; then
   docker rm -f "$NAME" > /dev/null
 fi
 
+# Patched cooked assets (carla-assets/Content/...) are mounted read-only over the same path in the container,
+# e.g. the motorcycle riders' jacket texture with the custom logo (rebuild: carla-assets/build_rider_logo.py).
+ASSET_MOUNTS=()
+if [ "${CARLA_NO_ASSET_PATCH:-0}" != "1" ] && [ -d "$DIR/carla-assets/Content" ]; then
+  while IFS= read -r f; do
+    ASSET_MOUNTS+=(-v "$f:/home/carla/CarlaUE4/${f#$DIR/carla-assets/}:ro")
+  done < <(find "$DIR/carla-assets/Content" -type f | sort)
+fi
+
 MODE=(-it)
 [ "${CARLA_DETACH:-0}" == "1" ] && MODE=(-d)
 [ ! -t 0 ] && [ "${CARLA_DETACH:-0}" != "1" ] && MODE=()
@@ -48,6 +58,7 @@ exec docker run --rm "${MODE[@]}" \
   --gpus all \
   --net=host \
   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+  "${ASSET_MOUNTS[@]}" \
   "${EXTRA[@]}" \
   "$IMAGE" \
   /bin/bash ./CarlaUE4.sh -nosound "${RENDER[@]}" -carla-rpc-port="$PORT" -benchmark -fps=20 -quality-level="$QUALITY"

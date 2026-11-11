@@ -102,8 +102,10 @@ def main():
   host = os.environ.get("OP_UI_HOST", "127.0.0.1")
   port = int(os.environ.get("OP_UI_PORT", "8765"))
 
-  sm = messaging.SubMaster(['modelV2', 'controlsState', 'carState', 'radarState', 'liveCalibration',
-                            'carControl', 'carParams'])
+  services = ['modelV2', 'controlsState', 'carState', 'radarState', 'liveCalibration', 'carControl', 'carParams']
+  # This loop reads at the camera rate (~20 Hz), far below the 100 Hz of controlsState/carState/carControl:
+  # SubMaster would then call them dead (average frequency check) and host_ui drops every frame of state.
+  sm = messaging.SubMaster(services, ignore_avg_freq=services)
   vipc = VisionIpcClient("camerad", VisionStreamType.VISION_STREAM_ROAD, True)
   sock = connect(host, port)
 

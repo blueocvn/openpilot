@@ -37,7 +37,7 @@ Lần chạy `all` đầu tiên còn build libyuv, tải thư viện acados và 
 | Biến                            | Ý nghĩa                                                                                                                                                                   |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CARLA_HEADLESS=1`              | CARLA không mở cửa sổ                                                                                                                                                     |
-| `CARLA_QUALITY=Low|High`        | chất lượng render (mặc định `Low`)                                                                                                                                        |
+| `CARLA_QUALITY=Low|High`        | chất lượng render (mặc định `High`)                                                                                                                                        |
 | `OP_UI=1|0`                     | 1 = UI openpilot trên host, 0 = UI Qt của bukapilot. Mặc định 1 nếu có `[[ORCA_RICH_MD:0f7ddb9c681681e71b87a3522b90f157:inline-html:%3Copenpilot%3E]]/.venv`, không thì 0 |
 | `SKIP_BUILD=1` / `SHELL_ONLY=1` | bỏ qua scons / chỉ mở shell trong container                                                                                                                               |
 | `CARLA_PORT`                    | cổng CARLA (mặc định 2000, host `127.0.0.1`)                                                                                                                              |
