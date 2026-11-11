@@ -87,6 +87,8 @@ CARLA_QUALITY=Low YELLOW_PATH=1 bash run.sh all --carla-town Town04_Opt --carla-
 | `OP_UI` | `0` / `1` | `1` nếu có `/home/ubuntu/openpilot/.venv`, không thì `0` | `1`: UI openpilot trên host; `0`: UI Qt của bukapilot |
 | `OP_UI_PORT` | số cổng | `8765` | cổng relay giữa bukapilot và UI openpilot |
 | `YELLOW_PATH` | `0` / `1` | `0` | `1`: đường đi màu vàng, giống `--yellow-path` (chỉ có tác dụng với `OP_UI=1`) |
+| `CARLA_KEYS` | `0` / `1` | `1` | `0`: không đọc phím từ cửa sổ CARLA, chỉ dùng terminal |
+| `CARLA_WINDOW_TITLE` | danh sách cách nhau bằng dấu phẩy | `CarlaUE4,=UI` | tên cửa sổ nhận phím: `CarlaUE4` khớp một phần tên, `=UI` khớp đúng tên `UI` |
 | `SKIP_BUILD` | `1` | không đặt | bỏ qua `scons` khi khởi động bridge |
 | `SHELL_ONLY` | `1` | không đặt | chỉ mở shell trong container bukapilot |
 | `IMAGE` | tên image | `bukapilot-sim:local` | image chạy bukapilot và bridge |
@@ -104,6 +106,9 @@ docker logs carla_server
 ```
 
 ## Phím điều khiển
+
+Phím dùng được ngay trong cửa sổ CARLA và cửa sổ `UI` của openpilot (bấm vào một trong hai rồi gõ), và vẫn dùng được ở terminal.
+Phím gõ ở cửa sổ khác không có tác dụng. Chỉ chạy trên Docker/X11; `CARLA_KEYS=0` để tắt.
 
 | Phím | Chức năng |
 |---|---|

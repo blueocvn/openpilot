@@ -8,6 +8,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 from multiprocessing import Queue
 
 SIM_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -51,6 +52,8 @@ def parse_args(add_args=None):
   parser.add_argument('--motorcycle-model', default=None,
                       help='one blueprint for all bikes (default: cycle through kawasaki.ninja, yamaha.yzf, '
                            'harley-davidson.low_rider)')
+  parser.add_argument('--no-carla-keys', dest='carla_keys', action='store_false',
+                      help='do not read keys from the CARLA window (Linux Docker); use the terminal only')
   parser.add_argument('--no-auto-engage', dest='auto_engage', action='store_false',
                       help='do not press SET automatically; engage with key 2 (or 1)')
   parser.add_argument('--launch-openpilot', action='store_true',
@@ -100,6 +103,9 @@ def main():
       wheel_poll_thread(queue)
     else:
       from tools.sim.lib.keyboard_ctrl import keyboard_poll_thread
+      if args.carla_keys and os.environ.get("CARLA_KEYS", "1") != "0" and os.environ.get("DISPLAY"):
+        from tools.sim.lib.x11_keys import x11_key_poll_thread
+        threading.Thread(target=x11_key_poll_thread, args=(queue,), daemon=True).start()
       keyboard_poll_thread(queue)
     bridge_p.join(30)
   finally:

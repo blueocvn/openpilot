@@ -27,6 +27,8 @@ KEYBOARD_HELP = """
   |  z/x | Left / right blinker   |
   |  q   | Exit all               |
   | wasd | Control manually       |
+
+  These keys also work while the CARLA window has focus (Linux Docker).
 """
 
 KEY_COMMANDS = {
