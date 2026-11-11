@@ -1,0 +1,14 @@
+# carlasim/carla:0.9.12 only ships what -RenderOffScreen needs. Opening the
+# CARLA window (chase view of the ego car) also needs the Vulkan loader and
+# the X11 libs SDL loads at runtime; without them CarlaUE4 exits 1 silently.
+# start_carla.sh builds this automatically the first time:
+#   docker build -t carla-sim:0.9.12 -f Dockerfile.carla .
+FROM carlasim/carla:0.9.12
+
+USER root
+# the base image's stale CUDA apt repo has an expired key and breaks apt-get update
+RUN rm -f /etc/apt/sources.list.d/cuda*.list /etc/apt/sources.list.d/nvidia-ml*.list \
+ && apt-get update && apt-get install -y --no-install-recommends \
+    libvulkan1 libxcursor1 libxi6 libxinerama1 libxss1 libxrandr2 libxxf86vm1 xdg-user-dirs \
+ && rm -rf /var/lib/apt/lists/*
+USER carla

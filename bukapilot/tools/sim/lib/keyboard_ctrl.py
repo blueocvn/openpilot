@@ -3,7 +3,8 @@ import termios
 import time
 from termios import (BRKINT, CS8, CSIZE, ECHO, ICANON, ICRNL, IEXTEN, INPCK,
                      ISTRIP, IXON, PARENB, VMIN, VTIME)
-from typing import NoReturn
+
+from tools.sim.bridge.common import control_cmd_gen
 
 # Indexes for termios list.
 IFLAG = 0
@@ -14,59 +15,78 @@ ISPEED = 4
 OSPEED = 5
 CC = 6
 
-STDIN_FD = sys.stdin.fileno()
+KEYBOARD_HELP = """
+  | key  |   functionality        |
+  |------|------------------------|
+  |  1   | Cruise resume / accel  |
+  |  2   | Cruise set / decel     |
+  |  3   | Cruise cancel          |
+  |  r   | Reset simulation       |
+  |  i   | Toggle ignition        |
+  |  h   | Hold / release car     |
+  |  z/x | Left / right blinker   |
+  |  q   | Exit all               |
+  | wasd | Control manually       |
+"""
+
+KEY_COMMANDS = {
+  '1': "cruise_up",
+  '2': "cruise_down",
+  '3': "cruise_cancel",
+  'w': "throttle_1.0",
+  'a': "steer_-0.15",
+  's': "brake_1.0",
+  'd': "steer_0.15",
+  'z': "blinker_left",
+  'x': "blinker_right",
+  'i': "ignition",
+  'h': "hold",
+  'r': "reset",
+  'q': "quit",
+}
+
 
 def getch() -> str:
-  old_settings = termios.tcgetattr(STDIN_FD)
+  stdin_fd = sys.stdin.fileno()
+  old_settings = termios.tcgetattr(stdin_fd)
   try:
-    # set
     mode = old_settings.copy()
     mode[IFLAG] &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON)
-    #mode[OFLAG] &= ~(OPOST)
     mode[CFLAG] &= ~(CSIZE | PARENB)
     mode[CFLAG] |= CS8
     mode[LFLAG] &= ~(ECHO | ICANON | IEXTEN)
     mode[CC][VMIN] = 1
     mode[CC][VTIME] = 0
-    termios.tcsetattr(STDIN_FD, termios.TCSAFLUSH, mode)
+    termios.tcsetattr(stdin_fd, termios.TCSAFLUSH, mode)
 
     ch = sys.stdin.read(1)
   finally:
-    termios.tcsetattr(STDIN_FD, termios.TCSADRAIN, old_settings)
+    termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_settings)
   return ch
 
-def keyboard_poll_thread(q: 'Queue[str]'):
+
+def print_keyboard_help():
+  print(f"Keyboard Commands:\n{KEYBOARD_HELP}")
+
+
+def keyboard_poll_thread(q):
+  print_keyboard_help()
   while True:
     c = getch()
-    # print("got %s" % c)
-    if c == '1':
-      q.put("cruise_up")
-    elif c == '2':
-      q.put("cruise_down")
-    elif c == '3':
-      q.put("cruise_cancel")
-    elif c == 'w':
-      q.put("throttle_%f" % 1.0)
-    elif c == 'a':
-      q.put("steer_%f" % 0.15)
-    elif c == 's':
-      q.put("brake_%f" % 1.0)
-    elif c == 'd':
-      q.put("steer_%f" % -0.15)
-    elif c == 'q':
-      q.put("quit")
+    cmd = KEY_COMMANDS.get(c)
+    if cmd is None:
+      print_keyboard_help()
+      continue
+    q.put(control_cmd_gen(cmd))
+    if cmd == "quit":
       break
 
-def test(q: 'Queue[str]') -> NoReturn:
-  while True:
-    print([q.get_nowait() for _ in range(q.qsize())] or None)
-    time.sleep(0.25)
 
-if __name__ == '__main__':
-  from multiprocessing import Process, Queue
-  q: Queue[str] = Queue()
-  p = Process(target=test, args=(q,))
-  p.daemon = True
-  p.start()
-
-  keyboard_poll_thread(q)
+def timed_poll_thread(q, duration, bridge_process=None):
+  """Headless replacement for the keyboard: run for `duration` seconds, then quit."""
+  end = time.monotonic() + duration
+  while time.monotonic() < end:
+    if bridge_process is not None and not bridge_process.is_alive():
+      return
+    time.sleep(0.5)
+  q.put(control_cmd_gen("quit"))

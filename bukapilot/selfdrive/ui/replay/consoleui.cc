@@ -172,7 +172,7 @@ void ConsoleUI::updateStatus() {
   auto [status_str, status_color] = status_text[status];
   write_item(0, 0, "STATUS:    ", status_str, "      ", false, status_color);
   std::string suffix = util::string_format(" / %s [%d/%d]      ", format_seconds(replay->totalSeconds()).c_str(),
-                                           replay->currentSeconds() / 60, replay->route()->segments().size());
+                                           replay->currentSeconds() / 60, (int)replay->route()->segments().size());
   write_item(0, 25, "TIME:  ", format_seconds(replay->currentSeconds()), suffix.c_str(), true);
 
   auto p = sm["liveParameters"].getLiveParameters();
@@ -241,7 +241,7 @@ void ConsoleUI::updateProgressBar(uint64_t cur, uint64_t total, bool success) {
 
 void ConsoleUI::updateSummary() {
   const auto &route = replay->route();
-  mvwprintw(w[Win::Stats], 0, 0, "Route: %s, %d segments", qPrintable(route->name()), route->segments().size());
+  mvwprintw(w[Win::Stats], 0, 0, "Route: %s, %d segments", qPrintable(route->name()), (int)route->segments().size());
   mvwprintw(w[Win::Stats], 1, 0, "Car Fingerprint: %s", replay->carFingerprint().c_str());
   wrefresh(w[Win::Stats]);
 }

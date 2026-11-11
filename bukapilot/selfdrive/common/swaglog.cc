@@ -20,7 +20,6 @@ class SwaglogState : public LogState {
  public:
   SwaglogState() : LogState("ipc:///tmp/logmessage") {}
 
-  bool initialized = false;
   json11::Json::object ctx_j;
 
   inline void initialize() {
@@ -58,7 +57,7 @@ class SwaglogState : public LogState {
       ctx_j["device"] =  "pc";
     }
 
-    initialized = true;
+    LogState::initialize();
   }
 };
 

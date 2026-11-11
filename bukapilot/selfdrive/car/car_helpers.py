@@ -14,7 +14,7 @@ EventName = car.CarEvent.EventName
 
 
 def get_startup_event(car_recognized, controller_available, fw_seen):
-  if is_tested_branch():
+  if is_tested_branch() or os.getenv("SIMULATION") == "1":  # no "branch not tested" warning in the sim
     event = EventName.startup
   elif Params().get("QC_Test"):
     event = EventName.startupQC

@@ -1,4 +1,5 @@
 import colorsys
+import os
 import numpy as np
 import pyray as rl
 from openpilot.cereal import messaging
@@ -27,6 +28,16 @@ NO_THROTTLE_COLORS = [
   rl.Color(242, 242, 242, 89),  # HSLF(112/360, 0.0, 0.95, 0.35)
   rl.Color(242, 242, 242, 0),   # HSLF(112/360, 0.0, 0.95, 0.0)
 ]
+
+# YELLOW_PATH=1 draws the driving path in yellow whether or not throttle is allowed (used by the CARLA sim UI,
+# where the default white path disappears on bright scenes)
+YELLOW_PATH = os.environ.get("YELLOW_PATH", "0") == "1"
+if YELLOW_PATH:
+  THROTTLE_COLORS = NO_THROTTLE_COLORS = [
+    rl.Color(255, 214, 10, 190),
+    rl.Color(255, 214, 10, 150),
+    rl.Color(255, 214, 10, 0),
+  ]
 
 
 @dataclass
@@ -284,8 +295,11 @@ class ModelRenderer(Widget):
 
     if self._experimental_mode:
       # Draw with acceleration coloring
-      if len(self._exp_gradient.colors) > 1:
+      if len(self._exp_gradient.colors) > 1 and not YELLOW_PATH:
         draw_polygon(self._rect, self._path.projected_points, gradient=self._exp_gradient)
+      elif YELLOW_PATH:
+        draw_polygon(self._rect, self._path.projected_points, gradient=Gradient(
+          start=(0.0, 1.0), end=(0.0, 0.0), colors=THROTTLE_COLORS, stops=[0.0, 0.5, 1.0]))
       else:
         draw_polygon(self._rect, self._path.projected_points, rl.Color(255, 255, 255, 30))
     else:
