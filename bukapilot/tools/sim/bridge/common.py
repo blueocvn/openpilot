@@ -46,28 +46,15 @@ def toggle_blinker(current, requested):
   return None if current == requested else requested
 
 
-def update_blinker_latch(latch, lane_change_seen, lane_change_off):
-  """Turn the latched blinker off once a lane change that started has returned to off.
-
-  Returns (latch, lane_change_seen). The latch is never cleared before the lane change has left `off`.
-  """
-  if latch is None:
-    return None, False
-  if not lane_change_off:
-    return latch, True
-  if lane_change_seen:
-    return None, False
-  return latch, False
-
-
-def plan_manual_routing(manual_active, steer, throttle, brake, blinker, engaged):
+def plan_manual_routing(manual_active, steer, throttle, brake, blinker, engaged, lane_change_ready):
   """Which parts of a manual key press override openpilot: (pedals_manual, steering_manual).
 
-  With a blinker latched and the car engaged, a steer key in the blinker's direction is only a nudge
-  (steering torque goes to the car, openpilot keeps steering). Steer keys: a = -0.15 (left), d = +0.15.
-  Anything else keeps the previous behaviour: any key press overrides everything.
+  A steer key in the direction of the blinker is only a nudge (steering torque goes to the car, openpilot
+  keeps steering) while the car is engaged and openpilot can act on it, that is `lane_change_ready`: the
+  lane change state is not `off`. Steer keys: a = -0.15 (left), d = +0.15.
+  In every other case a key press overrides everything, so the user can always steer by hand.
   """
-  nudge = (manual_active and engaged and steer != 0 and
+  nudge = (manual_active and engaged and lane_change_ready and steer != 0 and
            ((blinker == "left" and steer < 0) or (blinker == "right" and steer > 0)))
   if nudge:
     return (throttle != 0 or brake != 0), False
@@ -141,9 +128,8 @@ class SimulatorBridge(ABC):
     # one-shot: after engaging, raise the set speed to this value (the engage default is only 40 km/h)
     self.cruise_kph_pending = cruise_kph
     self.cruise_press_wait = 0
-    # z / x latch the blinker (ALC needs it to stay on); cleared again when the lane change it started ends
+    # z / x latch the blinker (ALC needs it to stay on); only the user turns it off again
     self.blinker = None
-    self.lane_change_seen = False
 
   def reset_engagement(self):
     self.past_startup_engaged = False
@@ -208,7 +194,6 @@ class SimulatorBridge(ABC):
         self.past_startup_engaged = True
     elif m[0] == "blinker":
       self.blinker = toggle_blinker(self.blinker, m[1])
-      self.lane_change_seen = False
     elif m[0] == "ignition":
       s.ignition = not s.ignition
     elif m[0] == "hold":
@@ -217,7 +202,7 @@ class SimulatorBridge(ABC):
     elif m[0] == "reset":
       self.world.reset()
       self.reset_engagement()
-      self.blinker, self.lane_change_seen = None, False
+      self.blinker = None
     elif m[0] == "quit":
       return False
     return True
@@ -286,8 +271,7 @@ class SimulatorBridge(ABC):
         self.held_button = 0
 
       self.sm.update(0)
-      lc_off = self.sm['lateralPlan'].laneChangeState == log.LateralPlan.LaneChangeState.off
-      self.blinker, self.lane_change_seen = update_blinker_latch(self.blinker, self.lane_change_seen, lc_off)
+      lane_change_ready = self.sm['lateralPlan'].laneChangeState != log.LateralPlan.LaneChangeState.off
       s.left_blinker = self.blinker == "left"
       s.right_blinker = self.blinker == "right"
 
@@ -300,7 +284,8 @@ class SimulatorBridge(ABC):
       cs = self.sm['controlsState']
       s.is_engaged = cs.active
       pedals_manual, steer_manual = plan_manual_routing(manual_control_active, self.manual_steer, self.manual_throttle,
-                                                        self.manual_brake, self.blinker, s.is_engaged)
+                                                        self.manual_brake, self.blinker, s.is_engaged,
+                                                        lane_change_ready)
 
       if self.cruise_press_wait > 0:
         self.cruise_press_wait -= 1
@@ -328,7 +313,7 @@ class SimulatorBridge(ABC):
         throttle_out, brake_out, steer_out = 0.0, 1.0, 0.0
       elif manual_control_active:
         # keyboard/joystick is a simulator override and always wins, except that a steer key pressed in the
-        # direction of a latched blinker is only a nudge: openpilot keeps steering the lane change
+        # direction of the blinker while a lane change is ready or running is only a nudge: openpilot keeps steering
         if pedals_manual:
           throttle_out, brake_out = self.manual_throttle, self.manual_brake
         else:

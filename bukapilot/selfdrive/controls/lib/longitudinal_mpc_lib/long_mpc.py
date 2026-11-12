@@ -340,25 +340,15 @@ class LongitudinalMpc:
     self.cruise_min_a = min_a
     self.cruise_max_a = max_a
 
-  def lead_to_follow(self, lead, ignore_lead):
-    """The lead, or None when it is to be ignored (lane change in progress) and is farther than the
-    T_FOLLOW_DANGER gap."""
-    if ignore_lead and lead.status and lead.dRel >= desired_follow_distance(
-        self.x0[1], lead.vLead, self.stop_distance_offset, T_FOLLOW_DANGER):
-      return None
-    return lead
-
-  def update(self, carstate, radarstate, v_cruise, prev_accel_constraint=False, desired_tf=None, ignore_lead=False):
-    self.desired_tf = get_desired_tf(carstate.cruiseState.setDistance) if desired_tf is None else desired_tf
+  def update(self, carstate, radarstate, v_cruise, prev_accel_constraint=False):
+    self.desired_tf = get_desired_tf(carstate.cruiseState.setDistance)
     self.set_weights()
     v_ego = self.x0[1]
     a_ego = self.x0[2]
-    lead_0 = self.lead_to_follow(radarstate.leadOne, ignore_lead)
-    lead_1 = self.lead_to_follow(radarstate.leadTwo, ignore_lead)
-    self.status = bool((lead_0 is not None and lead_0.status) or (lead_1 is not None and lead_1.status))
+    self.status = radarstate.leadOne.status or radarstate.leadTwo.status
 
-    lead_xv_0 = self.process_lead(lead_0)
-    lead_xv_1 = self.process_lead(lead_1)
+    lead_xv_0 = self.process_lead(radarstate.leadOne)
+    lead_xv_1 = self.process_lead(radarstate.leadTwo)
 
     # set accel limits in params
     self.params[:,0] = interp(float(self.status), [0.0, 1.0], [self.cruise_min_a, MIN_ACCEL])
@@ -391,7 +381,7 @@ class LongitudinalMpc:
 
     self.run()
     if (np.any(lead_xv_0[:,0] - self.x_sol[:,0] < CRASH_DISTANCE) and
-            lead_0 is not None and radarstate.leadOne.modelProb > 0.9):
+            radarstate.leadOne.modelProb > 0.9):
       self.crash_cnt += 1
     else:
       self.crash_cnt = 0

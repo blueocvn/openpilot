@@ -4,12 +4,26 @@ from selfdrive.config import Conversions as CV
 from common.params import Params
 from common.numpy_fast import clip
 from enum import Enum, auto
+import os
 import time
 
 LaneChangeState = log.LateralPlan.LaneChangeState
 LaneChangeDirection = log.LateralPlan.LaneChangeDirection
 
-LANE_CHANGE_SPEED_MIN = 30 * CV.MPH_TO_MS
+def lane_change_speed_min(value=None):
+  """Lowest speed for Assisted Lane Change in m/s: 30 mph, unless ALC_MIN_SPEED_KPH is a positive number.
+
+  Only the simulator sets ALC_MIN_SPEED_KPH; unset keeps the value used on real cars.
+  """
+  raw = os.environ.get("ALC_MIN_SPEED_KPH") if value is None else value
+  try:
+    kph = float(raw)
+  except (TypeError, ValueError):
+    return 30 * CV.MPH_TO_MS
+  return kph * CV.KPH_TO_MS if kph > 0.0 else 30 * CV.MPH_TO_MS
+
+
+LANE_CHANGE_SPEED_MIN = lane_change_speed_min()
 LANE_CHANGE_TIME_MAX = 10.
 ALC_CANCEL_DELAY = 1.75 # In seconds
 

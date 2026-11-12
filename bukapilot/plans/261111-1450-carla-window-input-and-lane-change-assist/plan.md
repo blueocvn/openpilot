@@ -1,6 +1,6 @@
 ---
 title: CARLA window input and blinker lane-change assist
-status: implemented, simulator run pending
+status: implemented (phase 4 removed 2026-11-12), simulator run pending
 mode: fast
 created: 2026-11-11
 platform: tools/sim-linux-docker (Linux Docker, X11)
@@ -53,6 +53,8 @@ All paths are relative to `bukapilot/tools/sim` unless they start with `selfdriv
 ## Decision made
 
 Speed gate: the shared constant stays at 30 mph (about 48.3 km/h). Instead the scenario is run faster, with the motorcycle at 60 km/h and the car's set speed at 80 km/h or more (user decision, temporary). Phase 3 therefore makes no `selfdrive/` change; the only `selfdrive/` edits in the whole plan are the opt-in ones in phase 4.
+
+**Superseded on 2026-11-12:** the user chose a 30 km/h gate for the simulator. `ALC_MIN_SPEED_KPH` (default `30` in `sim-linux-docker/start_docker.sh`) overrides `LANE_CHANGE_SPEED_MIN`; with the variable unset, as on real cars, it stays 30 mph. See session 5 in the validation log.
 
 ## Risks
 
@@ -131,3 +133,17 @@ The user chose to raise the car and motorcycle speeds temporarily instead of cha
 All four phases are implemented and not committed. Offline checks passed inside the running `bukapilot_sim_carla` container: 26 unit tests (existing plus `tools/sim/tests/test_sim_input.py`), the 6 longitudinal maneuver tests with the default environment and with `ALC_GAP_TF=3.0`, and a live X11 read (13 of 13 keys mapped, the CARLA window title `CarlaUE4` matches, the poll thread starts). A direct probe of the MPC at 60 km/h confirmed the intended effect: with the lead ignored the car may accelerate up to +1.20 m/s² against +0.11 with the lead; a lead closer than the 1.0 s floor is kept; a 3.0 s headway gives a 39.0 m gap against 15.7 m.
 
 Not done: the end-to-end scenario run (blinker, nudge, lane change past a 60 km/h motorcycle) and its report, because that needs the user's running CARLA session to be restarted. The longitudinal maneuver test needs `StoppingDistanceOffset` in the params store; it fails the same way on the original code, so it was run with that parameter faked.
+
+### Session 5 (2026-11-12), lane change logic check and 30 km/h gate
+
+Checked offline in a throwaway container with the real `DesireHelper`, the bridge's blinker latch and the real longitudinal MPC in closed loop. The end-to-end CARLA run is still pending.
+
+**Decision:** the user set the lane change gate to 30 km/h in the simulator. Implemented as `ALC_MIN_SPEED_KPH` (`desire_helper.lane_change_speed_min`), default `30` from `start_docker.sh`, unset keeps 30 mph. With `ALC_GAP_TF=3.0` the car slows about 4 to 5 km/h while it opens the gap, so the lead must do about 36 km/h or more (lead 40 km/h: lowest 35.5 km/h; lead 34 km/h: 1.5 s under the gate).
+
+**Decisions on the defects found (user, 2026-11-12):**
+1. Blinker: only the user turns it on and off. The automatic clear after a lane change (session 1, question 2) is removed, together with `update_blinker_latch`. It never cleared after a completed lane change (the state goes from `laneChangeFinishing` to `preLaneChange`, never `off`) and it cleared too early when the speed dropped under the gate.
+2. Manual steering: `plan_manual_routing` treats a steer key in the blinker direction as a nudge only while the lane change state is not `off`. In every other case the key steers by hand.
+
+3. Gap before the lane change: the driver makes it, not the car, because slowing down automatically is unsafe for a vehicle behind. Phase 4 is removed: `lane_change_gap.py` is deleted, `long_mpc.py`, `longitudinal_planner.py` and `plannerd.py` are back to their versions before phase 4, and `ALC_GAP_TF` no longer exists. While crossing, the car follows the lead at the normal headway until the lead leaves its path (user choice over a 1.0 s crossing headway and over ignoring the lead). Outcome 3 and the `ALC_GAP_TF` acceptance criterion above no longer apply. The `ALC_GAP_TF=3.0` figures in the gate decision above were measured before this removal; without gap opening the car does not slow down when the blinker is on.
+
+**Not covered:** a stationary object. The car stops behind it, below any gate.

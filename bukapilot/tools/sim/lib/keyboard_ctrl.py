@@ -29,8 +29,10 @@ KEYBOARD_HELP = """
   | wasd | Control manually       |
 
   These keys also work while the CARLA window has focus (Linux Docker).
-  With a blinker on and the car engaged, a/d in the blinker's direction only
-  nudges the steering wheel: openpilot does the lane change (assisted lane change).
+  With a blinker on, the car engaged and a lane change possible, a/d in the
+  blinker's direction only nudges the steering wheel: openpilot does the lane
+  change (assisted lane change). Otherwise a/d steer by hand.
+  The blinker stays on until you press z/x again.
 """
 
 KEY_COMMANDS = {

@@ -34,7 +34,7 @@ bash run.sh all --carla-town Town04_Opt --carla-spawn-point 16 --motorcycle
 bash run.sh all --carla-town Town04_Opt --carla-spawn-point 170 --motorcycle-spec "same:40:25,oncoming:120:55"
 
 # Thử đổi làn để vượt một xe máy (xem mục "Đổi làn bằng xi-nhan" bên dưới)
-ALC_GAP_TF=3.0 bash run.sh all --carla-town Town04_Opt --carla-spawn-point 170 --motorcycle-spec "same:40:60" --cruise-kph 80
+bash run.sh all --carla-town Town04_Opt --carla-spawn-point 170 --motorcycle-spec "same:40:60" --cruise-kph 80
 
 # Map khác
 bash run.sh all --carla-town Town03 --carla-spawn-point <N>
@@ -90,7 +90,7 @@ CARLA_QUALITY=Low YELLOW_PATH=1 bash run.sh all --carla-town Town04_Opt --carla-
 | `OP_UI` | `0` / `1` | `1` nếu có `/home/ubuntu/openpilot/.venv`, không thì `0` | `1`: UI openpilot trên host; `0`: UI Qt của bukapilot |
 | `OP_UI_PORT` | số cổng | `8765` | cổng relay giữa bukapilot và UI openpilot |
 | `YELLOW_PATH` | `0` / `1` | `0` | `1`: đường đi màu vàng, giống `--yellow-path` (chỉ có tác dụng với `OP_UI=1`) |
-| `ALC_GAP_TF` | số giây, ví dụ `3.0` | không đặt (tắt) | khi xi-nhan bật, xe giãn khoảng cách bám lên mức này trước khi đổi làn, rồi tăng tốc lúc đang chuyển làn (xem mục đổi làn) |
+| `ALC_MIN_SPEED_KPH` | km/h | `30` | tốc độ thấp nhất để ALC đổi làn trong mô phỏng. Xe thật không đặt biến này nên vẫn là 30 mph (48,3 km/h) |
 | `CARLA_KEYS` | `0` / `1` | `1` | `0`: không đọc phím từ cửa sổ CARLA, chỉ dùng terminal |
 | `CARLA_WINDOW_TITLE` | danh sách cách nhau bằng dấu phẩy | `CarlaUE4,=UI` | tên cửa sổ nhận phím: `CarlaUE4` khớp một phần tên, `=UI` khớp đúng tên `UI` |
 | `SKIP_BUILD` | `1` | không đặt | bỏ qua `scons` khi khởi động bridge |
@@ -132,17 +132,20 @@ Xe dùng tính năng đổi làn có hỗ trợ (ALC) sẵn có của bukapilot,
 2. Khi xe đang chạy bằng openpilot, bấm `a` (trái) hoặc `d` (phải) cùng hướng xi-nhan để "đánh lái nhẹ".
    Lúc này phím chỉ gửi lực tay lái, còn openpilot tự lái và đổi làn. Bấm ngược hướng, hoặc khi
    không có xi-nhan, phím vẫn lái tay như trước.
-3. Đổi làn xong thì xi-nhan tự tắt. Bấm `z` / `x` lần nữa để tắt tay.
+3. Xi-nhan không tự tắt: đổi làn xong, bấm `z` / `x` lần nữa để tắt. Khi xi-nhan còn bật, bấm `a` / `d`
+   cùng hướng sẽ đổi làn thêm lần nữa.
+4. Khi chưa thể đổi làn (ví dụ xe chạy dưới tốc độ tối thiểu), `a` / `d` vẫn lái tay bình thường dù xi-nhan
+   đang bật.
 
-**Điều kiện:** ALC chỉ bắt đầu khi xe chạy từ khoảng 48,3 km/h (30 mph) trở lên
-(`LANE_CHANGE_SPEED_MIN` trong `selfdrive/controls/lib/desire_helper.py`). Dưới mức này xi-nhan còn làm
-xe ngừng tự lái ngang. Vì vậy để thử vượt, cho xe máy chạy nhanh hơn (ví dụ 60 km/h) và đặt tốc độ cruise
-của xe từ 80 km/h trở lên: thêm `--cruise-kph 80` vào lệnh (sau khi engage, bridge tự giữ nút RES+ để đưa `vCruise` lên mức đó; engage lúc xe đứng yên chỉ đặt 40 km/h). Có thể bấm `1` tay, mỗi lần chỉ +1 km/h, giữ lâu hơn 0,5 s thì +5 km/h; xem dòng `vCruise=` trong log.
+**Điều kiện:** trong mô phỏng, ALC chỉ bắt đầu khi xe chạy từ 30 km/h trở lên (biến `ALC_MIN_SPEED_KPH`,
+mặc định `30`). Trên xe thật mức này vẫn là 30 mph, khoảng 48,3 km/h (`LANE_CHANGE_SPEED_MIN` trong
+`selfdrive/controls/lib/desire_helper.py`). Dưới mức này xi-nhan còn làm xe ngừng tự lái ngang. Xe phải
+được phép chạy nhanh hơn xe máy thì mới vượt được, nên đặt tốc độ cruise cao hơn tốc độ xe máy, ví dụ
+80 km/h: thêm `--cruise-kph 80` vào lệnh (sau khi engage, bridge tự giữ nút RES+ để đưa `vCruise` lên mức đó; engage lúc xe đứng yên chỉ đặt 40 km/h). Có thể bấm `1` tay, mỗi lần chỉ +1 km/h, giữ lâu hơn 0,5 s thì +5 km/h; xem dòng `vCruise=` trong log.
 Mô phỏng này không báo điểm mù: tự nhìn làn bên trước khi đổi làn, và không đặt xe máy ở làn trái khi thử.
 
-**Mở khoảng cách (`ALC_GAP_TF`):** không đặt thì không có gì thay đổi. Khi đặt (ví dụ `3.0`):
-- Xi-nhan bật, chưa đổi làn: khoảng cách bám theo xe trước tăng dần lên mức `ALC_GAP_TF` giây.
-  Phím đánh lái nhẹ vẫn đổi làn ngay cả khi khoảng cách chưa đủ.
-- Đang chuyển làn: xe không bị xe máy ở làn cũ giữ lại nên tăng tốc được. Nếu xe máy gần hơn khoảng cách
-  ứng với 1,0 s thì vẫn giữ lại.
-- Đổi làn xong: khoảng cách về mức bình thường trong khoảng 2 giây.
+**Khoảng cách trước khi vượt:** xe không tự giảm tốc khi xi-nhan bật, vì giảm tốc đột ngột có thể gây nguy
+hiểm cho xe phía sau. Người lái tự mở khoảng cách: bấm `2` để hạ tốc độ cruise (mỗi lần -1 km/h, giữ lâu
+hơn 0,5 s thì -5 km/h), chờ khoảng cách đủ rộng, bấm `1` để tăng lại rồi mới đổi làn. Phím `s` (phanh) cũng
+giảm tốc nhưng làm openpilot ngắt; bấm `2` để bật lại. Trong lúc chuyển làn xe vẫn bám theo xe máy ở khoảng
+cách bình thường cho đến khi xe máy ra khỏi đường đi của xe, rồi mới tăng lên tốc độ cruise.
