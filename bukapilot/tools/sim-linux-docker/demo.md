@@ -58,6 +58,7 @@ bash run.sh all --carla-town Town03 --carla-spawn-point <N>
 | `--host` (`--carla-host`) | địa chỉ IP | `127.0.0.1` (hoặc `$CARLA_HOST`) | server CARLA |
 | `--port` (`--carla-port`) | số cổng | `2000` (hoặc `$CARLA_PORT`) | cổng server CARLA |
 | `--yellow-path` / `--no-yellow-path` | cờ (do `run.sh` xử lý, không gửi cho bridge) | tắt | đường đi vàng trong UI openpilot (`OP_UI=1`) |
+| `--lead-log` / `--no-lead-log` | cờ (do `run.sh` xử lý, không gửi cho bridge) | tắt | log chi tiết: xe thấy gì và thực tế ra sao, xem mục "Log kiểm tra khoảng cách" |
 
 Ví dụ kết hợp:
 
@@ -90,6 +91,7 @@ CARLA_QUALITY=Low YELLOW_PATH=1 bash run.sh all --carla-town Town04_Opt --carla-
 | `OP_UI` | `0` / `1` | `1` nếu có `/home/ubuntu/openpilot/.venv`, không thì `0` | `1`: UI openpilot trên host; `0`: UI Qt của bukapilot |
 | `OP_UI_PORT` | số cổng | `8765` | cổng relay giữa bukapilot và UI openpilot |
 | `YELLOW_PATH` | `0` / `1` | `0` | `1`: đường đi màu vàng, giống `--yellow-path` (chỉ có tác dụng với `OP_UI=1`) |
+| `LEAD_LOG` | `0` / `1` | `0` | `1`: log chi tiết về xe phía trước, giống `--lead-log` |
 | `ALC_MIN_SPEED_KPH` | km/h | `30` | tốc độ thấp nhất để ALC đổi làn trong mô phỏng. Xe thật không đặt biến này nên vẫn là 30 mph (48,3 km/h) |
 | `CARLA_KEYS` | `0` / `1` | `1` | `0`: không đọc phím từ cửa sổ CARLA, chỉ dùng terminal |
 | `CARLA_WINDOW_TITLE` | danh sách cách nhau bằng dấu phẩy | `CarlaUE4,=UI` | tên cửa sổ nhận phím: `CarlaUE4` khớp một phần tên, `=UI` khớp đúng tên `UI` |
@@ -118,7 +120,9 @@ Phím gõ ở cửa sổ khác không có tác dụng. Chỉ chạy trên Docker
 |---|---|
 | 1 / 2 / 3 | cruise RES+ / SET- / cancel |
 | w a s d | ga / lái trái / phanh / lái phải (giữ phím được) |
-| z / x | xi-nhan trái / phải. Bấm một lần để bật và giữ, bấm lại để tắt, bấm phím bên kia để đổi bên |
+| z | xi-nhan trái, bật và giữ (bấm lại vẫn giữ nguyên) |
+| x | về giữa: tắt xi-nhan |
+| c | xi-nhan phải, bật và giữ (bấm lại vẫn giữ nguyên) |
 | h | giữ / thả xe |
 | i | bật/tắt ignition |
 | r | reset về điểm xuất phát |
@@ -128,11 +132,11 @@ Phím gõ ở cửa sổ khác không có tác dụng. Chỉ chạy trên Docker
 
 Xe dùng tính năng đổi làn có hỗ trợ (ALC) sẵn có của bukapilot, chưa có chế độ tự quyết định vượt.
 
-1. Bấm `z` (trái) hoặc `x` (phải): xi-nhan bật và được giữ.
+1. Bấm `z` (trái) hoặc `c` (phải): xi-nhan bật và được giữ.
 2. Khi xe đang chạy bằng openpilot, bấm `a` (trái) hoặc `d` (phải) cùng hướng xi-nhan để "đánh lái nhẹ".
    Lúc này phím chỉ gửi lực tay lái, còn openpilot tự lái và đổi làn. Bấm ngược hướng, hoặc khi
    không có xi-nhan, phím vẫn lái tay như trước.
-3. Xi-nhan không tự tắt: đổi làn xong, bấm `z` / `x` lần nữa để tắt. Khi xi-nhan còn bật, bấm `a` / `d`
+3. Xi-nhan không tự tắt: đổi làn xong, bấm `x` (về giữa) để tắt. Khi xi-nhan còn bật, bấm `a` / `d`
    cùng hướng sẽ đổi làn thêm lần nữa.
 4. Khi chưa thể đổi làn (ví dụ xe chạy dưới tốc độ tối thiểu), `a` / `d` vẫn lái tay bình thường dù xi-nhan
    đang bật.
@@ -149,3 +153,39 @@ hiểm cho xe phía sau. Người lái tự mở khoảng cách: bấm `2` để
 hơn 0,5 s thì -5 km/h), chờ khoảng cách đủ rộng, bấm `1` để tăng lại rồi mới đổi làn. Phím `s` (phanh) cũng
 giảm tốc nhưng làm openpilot ngắt; bấm `2` để bật lại. Trong lúc chuyển làn xe vẫn bám theo xe máy ở khoảng
 cách bình thường cho đến khi xe máy ra khỏi đường đi của xe, rồi mới tăng lên tốc độ cruise.
+
+## Log kiểm tra khoảng cách với xe phía trước
+
+Mặc định bridge in một dòng ngắn mỗi giây (`engaged=... speed=... throttle=...`). Để kiểm tra xe có giữ
+được khoảng cách với xe máy phía trước hay không, bật log chi tiết:
+
+```bash
+bash run.sh all --carla-town Town04_Opt --carla-spawn-point 170 --motorcycle --lead-log
+LEAD_LOG=1 bash run.sh all ...        # cùng ý nghĩa; --no-lead-log để tắt
+```
+
+Mỗi dòng tách rõ thông tin do openpilot thu và thông tin do mô phỏng thu:
+
+```
+[OP cmd] engaged=True vCruise=80kph plan=lead0 accel=+0.40 throttle=0.67 brake=0.00 steer=-1.3 fcw=False alert=''
+| [OP sees] lead dRel=9.4m vLead=12.0 prob=1.00
+| [SIM] speed=11.2 lead gap=1.7m vLead=10.6 closing=+0.6 ttc=2.8s
+| [ERR] dRel=+7.7m vLead=+1.4
+```
+
+| Nhãn | Do ai thu | Nội dung |
+|---|---|---|
+| `[OP cmd]` | openpilot | lệnh của openpilot: `plan` là nguồn kế hoạch (`lead0`/`lead1` bám xe phía trước, `cruise` chạy theo tốc độ cài đặt), `accel` là gia tốc yêu cầu, `fcw` cảnh báo va chạm. `throttle`/`brake` là ga và phanh mà bridge suy ra từ `accel` |
+| `[OP sees]` | openpilot (camera + model) | xe phía trước mà openpilot nhìn thấy: `dRel` khoảng cách, `vLead` vận tốc, `prob` xác suất của model. `NO LEAD` nghĩa là openpilot không thấy xe nào |
+| `[SIM]` | CARLA | số thật: `speed` tốc độ xe mình, `gap` khoảng cách giữa hai đầu xe tới xe máy gần nhất trong làn, `vLead` vận tốc xe máy, `closing` tốc độ tiến lại gần (dương là đang tới gần), `ttc` thời gian tới va chạm (`CONTACT` là đã chạm, `-` là không đang tới gần) |
+| `[ERR]` | tính ra | openpilot thấy trừ số thật. `dRel` dương là openpilot tưởng xe máy ở xa hơn thực tế; `lead missed` là openpilot bỏ lỡ xe máy |
+
+Lưu ý khi đọc:
+
+- Số `[SIM]` chỉ được in ra, không bao giờ đưa vào openpilot: xe thật chỉ có camera nên mô phỏng cũng vậy.
+- `[SIM]` và `[ERR]` chỉ xuất hiện khi có xe máy trong làn của xe mình (lệch ngang tối đa 2 m); không có thì chỉ in `[OP cmd]`, `[OP sees]` và `speed`.
+- `dRel` của openpilot tính từ camera trừ 1,52 m, còn `gap` tính giữa hai đầu xe, nên hai số có thể chênh 1 đến 2 m ngay cả khi model đúng. Nên xem xu hướng, không so từng mét.
+- Tần suất: mỗi giây một dòng, và 10 dòng mỗi giây khi khoảng cách thật dưới 40 m (`CLOSE_LEAD_LOG_M` trong `tools/sim/bridge/common.py`).
+- Khi xe của mình va chạm, log in một khối chữ HOA có viền `#` (nội dung: va chạm với vật gì, tốc độ xe, lực va chạm và openpilot lúc đó thấy lead nào hoặc không thấy lead nào). Sự kiện này lấy từ cảm biến va chạm của CARLA, không phụ thuộc vào `gap`, và chỉ in tối đa một khối mỗi giây dù xe vẫn đang tì vào vật cản.
+- Khi khoảng cách thật dưới 15 m, bridge lưu thêm khung hình camera mà model thực sự nhận (JPEG, đóng dấu `SIM gap=... | OP dRel=...` ở đầu ảnh) vào `.carla/lead-frames/` (đổi bằng biến `LEAD_FRAME_DIR`), tối đa 2 ảnh mỗi giây và 200 ảnh mỗi lần chạy. Tên file có số thứ tự, khoảng cách thật và khoảng cách openpilot thấy, ví dụ `0003_gap008.1_op23.2.jpg`.
+- Cách nhận biết vấn đề: `NO LEAD` trong khi `gap` còn nhỏ nghĩa là model bỏ lỡ xe máy; `plan=cruise` và `accel` dương khi xe máy ở gần nghĩa là planner không coi nó là vật cản.

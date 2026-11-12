@@ -6,12 +6,14 @@
 #   bash run.sh all [bridge args]           # CARLA (background) + bukapilot + bridge
 #   bash run.sh all --carla-town Town04_Opt --carla-spawn-point 16
 #   bash run.sh all --yellow-path           # openpilot UI (OP_UI=1) draws the driving path in yellow
+#   bash run.sh all --lead-log              # detailed log: what openpilot sees vs the simulator's ground truth
 #   bash run.sh server | bridge [args] | status | stop
 #
 # Environment: CARLA_HEADLESS=1, CARLA_QUALITY=Low|High (default High), CARLA_PORT=2000,
 #              OP_UI=1 (openpilot UI on the host) | 0 (bukapilot Qt UI). Default: 1 if <openpilot>/.venv exists, else 0.
 #              SKIP_BUILD=1 (skip scons), SHELL_ONLY=1, YELLOW_PATH=1 (same as --yellow-path; OP_UI=1 only).
 #              ALC_MIN_SPEED_KPH=30 (lowest speed for a lane change; real cars keep 30 mph),
+#              LEAD_LOG=1 (same as --lead-log; default 0 = the short status line),
 #              CARLA_KEYS=0 (no keys from the CARLA window), CARLA_WINDOW_TITLE (default CarlaUE4,=UI).
 set -euo pipefail
 
@@ -94,17 +96,21 @@ start_server() {
 }
 
 # run.sh's own options are taken out of the bridge args: --yellow-path / --no-yellow-path
-# (openpilot UI draws the driving path in yellow; same as YELLOW_PATH=1|0, default off)
+# (openpilot UI draws the driving path in yellow; same as YELLOW_PATH=1|0, default off) and --lead-log / --no-lead-log
+# (status line with openpilot's lead vs the simulator's ground truth; same as LEAD_LOG=1|0, default off)
 split_opts() {
   BRIDGE_ARGS=()
   for a in "$@"; do
     case "$a" in
       --yellow-path) YELLOW_PATH=1 ;;
       --no-yellow-path) YELLOW_PATH=0 ;;
+      --lead-log) LEAD_LOG=1 ;;
+      --no-lead-log) LEAD_LOG=0 ;;
       *) BRIDGE_ARGS+=("$a") ;;
     esac
   done
   export YELLOW_PATH="${YELLOW_PATH:-0}"
+  export LEAD_LOG="${LEAD_LOG:-0}"
 }
 
 start_bridge() {

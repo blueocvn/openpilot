@@ -10,6 +10,8 @@ to bukapilot (openpilot 0.8.13):
     carState.aEgo with a small PI loop and capped at the cruise set speed.
 """
 import functools
+import os
+import pathlib
 import signal
 import threading
 import time
@@ -41,9 +43,9 @@ def control_cmd_gen(cmd: str):
   return QueueMessage(QueueMessageType.CONTROL_COMMAND, cmd)
 
 
-def toggle_blinker(current, requested):
-  """z / x latch a blinker on; pressing the same key again turns it off, the other key switches side."""
-  return None if current == requested else requested
+def blinker_for_command(requested):
+  """z latches the left blinker, c the right one, x puts it back to center (off). Pressing a side key again keeps it on."""
+  return None if requested == "off" else requested
 
 
 def plan_manual_routing(manual_active, steer, throttle, brake, blinker, engaged, lane_change_ready):
@@ -61,7 +63,101 @@ def plan_manual_routing(manual_active, steer, throttle, brake, blinker, engaged,
   return manual_active, manual_active
 
 
-LONG_PRESS_FRAMES = 55    # controlsd adds 5 km/h after 50 frames of a held button
+def lead_truth(ego_xy, ego_forward_xy, ego_half_length, others, lane_half_width=2.0):
+  """Simulator ground truth of the nearest object ahead in the ego lane: (bumper gap m, speed along ego heading m/s).
+
+  For logging only, to grade what the camera model reports. It is never given to openpilot: the real car has a
+  camera and nothing else. `others` is an iterable of (xy, velocity_xy, half_length).
+  """
+  fx, fy = ego_forward_xy
+  norm = float(np.hypot(fx, fy)) or 1.0
+  fx, fy = fx / norm, fy / norm
+  best = None
+  for (ox, oy), (vx, vy), half_length in others:
+    dx, dy = ox - ego_xy[0], oy - ego_xy[1]
+    longitudinal = dx * fx + dy * fy
+    lateral = abs(dx * fy - dy * fx)
+    if longitudinal <= 0.0 or lateral > lane_half_width:
+      continue
+    gap = longitudinal - ego_half_length - half_length
+    if best is None or gap < best[0]:
+      best = (gap, vx * fx + vy * fy)
+  return best
+
+
+CLOSE_LEAD_LOG_M = 40.0   # log at 10 Hz while the true gap to the lead is below this
+LEAD_FRAME_GAP_M = 15.0    # save the camera frame (what the model receives) while the true gap is below this
+LEAD_FRAME_PERIOD_S = 0.5  # ... at most this often,
+LEAD_FRAME_MAX = 200       # ... and at most this many per run
+LEAD_FRAME_DIR = pathlib.Path(os.environ.get("LEAD_FRAME_DIR") or pathlib.Path(__file__).resolve().parents[3] / ".carla" / "lead-frames")
+COLLISION_LOG_GAP_S = 1.0  # one collision banner per second at most (CARLA reports every tick of a sustained contact)
+
+
+def frame_label(truth, seen):
+  """Caption stamped on a saved camera frame: the simulator's truth next to what openpilot perceived."""
+  perceived = "OP dRel={:.1f}m vLead={:.1f} prob={:.2f}".format(*seen) if seen else "OP NO LEAD"
+  return f"SIM gap={truth[0]:.1f}m vLead={truth[1]:.1f}  |  {perceived}"
+
+
+def frame_name(index, truth, seen):
+  drel = f"{seen[0]:.1f}" if seen else "none"
+  return f"{index:04d}_gap{max(truth[0], 0.0):05.1f}_op{drel}.jpg"
+
+
+def save_lead_frame(bgra, path, label):
+  """Write a camera frame as a JPEG with `label` stamped on a band at the top. Runs off the bridge loop."""
+  from PIL import Image, ImageDraw, ImageFont
+  image = Image.fromarray(bgra[:, :, [2, 1, 0]])
+  draw = ImageDraw.Draw(image)
+  try:
+    font = ImageFont.load_default(size=40)
+  except TypeError:  # Pillow < 10.1 has a fixed-size default font only
+    font = ImageFont.load_default()
+  draw.rectangle([0, 0, image.width, 64], fill=(0, 0, 0))
+  draw.text((16, 10), label, fill=(255, 255, 0), font=font)
+  path.parent.mkdir(parents=True, exist_ok=True)
+  image.save(path, quality=85)
+
+
+def collision_banner(other, impulse, sim_speed, seen):
+  """Loud, upper-case collision notice for the lead log. `seen` is what openpilot saw at that moment."""
+  perceived = ("OPENPILOT SAW LEAD: DREL={:.1f}M VLEAD={:.1f} PROB={:.2f}".format(*seen)
+               if seen else "OPENPILOT SAW NO LEAD")
+  bar = "#" * 78
+  lines = [bar, "#####  !!!  COLLISION  !!!  COLLISION  !!!  COLLISION  !!!  #####",
+           f"COLLIDED WITH: {other} | EGO SPEED: {sim_speed:.1f} M/S | IMPACT: {impulse:.0f}",
+           perceived, bar]
+  return "\n".join(line.upper() for line in lines)
+
+
+def status_line(op, seen, sim_speed, truth):
+  """One log line that keeps apart what openpilot decides/perceives and what only the simulator knows.
+
+  [OP cmd]  openpilot's output (planner source, requested accel) and the pedals the bridge derived from it
+  [OP sees] the lead openpilot perceives from the camera model: (dRel m, vLead m/s, prob) or None
+  [SIM]     simulator ground truth: own speed and (bumper gap m, lead speed m/s); never given to openpilot
+  [ERR]     what openpilot sees minus the truth
+  """
+  line = (f"[OP cmd] engaged={op['engaged']} vCruise={op['v_cruise']:.0f}kph plan={op['source']} "
+          f"accel={op['accel']:+.2f} throttle={op['throttle']:.2f} brake={op['brake']:.2f} steer={op['steer']:+.1f} "
+          f"fcw={op['fcw']} alert={op['alert']!r}")
+  line += (" | [OP sees] lead dRel={:.1f}m vLead={:.1f} prob={:.2f}".format(*seen)
+           if seen else " | [OP sees] NO LEAD")
+  line += f" | [SIM] speed={sim_speed:.1f}"
+  if truth is None:
+    return line
+  gap, v_lead = truth
+  closing = sim_speed - v_lead
+  ttc = f"{gap / closing:.1f}s" if closing > 0.1 and gap > 0.0 else ("CONTACT" if gap <= 0.0 else "-")
+  line += f" lead gap={gap:.1f}m vLead={v_lead:.1f} closing={closing:+.1f} ttc={ttc}"
+  if seen:
+    line += f" | [ERR] dRel={seen[0] - gap:+.1f}m vLead={seen[1] - v_lead:+.1f}"
+  else:
+    line += " | [ERR] lead missed"
+  return line
+
+
+LONG_PRESS_FRAMES = 55   # controlsd adds 5 km/h after 50 frames of a held button
 SHORT_PRESS_FRAMES = 10   # one press adds 1 km/h
 CRUISE_PRESS_GAP = 25     # idle frames between presses
 
@@ -128,8 +224,13 @@ class SimulatorBridge(ABC):
     # one-shot: after engaging, raise the set speed to this value (the engage default is only 40 km/h)
     self.cruise_kph_pending = cruise_kph
     self.cruise_press_wait = 0
-    # z / x latch the blinker (ALC needs it to stay on); only the user turns it off again
+    # z / c latch the blinker (ALC needs it to stay on); only x (center) turns it off again
     self.blinker = None
+    # LEAD_LOG=1: the status line splits openpilot's view from the simulator's ground truth (10 Hz near a lead)
+    self.lead_log = os.environ.get("LEAD_LOG") == "1"
+    self.last_collision_print = float("-inf")
+    self.last_frame_save = float("-inf")
+    self.frames_saved = 0
 
   def reset_engagement(self):
     self.past_startup_engaged = False
@@ -160,12 +261,47 @@ class SimulatorBridge(ABC):
     bridge_p.start()
     return bridge_p
 
-  def print_status(self):
+  def print_status(self, truth=None):
     cs = self.sm['controlsState']
     s = self.simulator_state
-    print(f"engaged={s.is_engaged} engageable={cs.engageable} speed={s.speed:.2f} m/s "
-          f"vCruise={cs.vCruise:.0f} kph steer={self.last_controls[0]:+.1f} throttle={self.last_controls[1]:.2f} "
-          f"brake={self.last_controls[2]:.2f} alert={cs.alertType!r}", flush=True)
+    if not self.lead_log:
+      print(f"engaged={s.is_engaged} engageable={cs.engageable} speed={s.speed:.2f} m/s "
+            f"vCruise={cs.vCruise:.0f} kph steer={self.last_controls[0]:+.1f} throttle={self.last_controls[1]:.2f} "
+            f"brake={self.last_controls[2]:.2f} alert={cs.alertType!r}", flush=True)
+      return
+    plan = self.sm['longitudinalPlan']
+    op = dict(engaged=bool(s.is_engaged), v_cruise=cs.vCruise, alert=cs.alertType,
+              accel=self.sm['carControl'].actuators.accel, steer=self.last_controls[0],
+              throttle=self.last_controls[1], brake=self.last_controls[2],
+              source=plan.longitudinalPlanSource, fcw=bool(plan.fcw))
+    print(status_line(op, self.seen_lead(), s.speed, truth), flush=True)
+
+  def seen_lead(self):
+    """(dRel, vLead, prob) of the lead openpilot perceives, or None."""
+    lead = self.sm['radarState'].leadOne
+    return (lead.dRel, lead.vLead, lead.modelProb) if lead.status else None
+
+  def save_frame_near_lead(self, truth):
+    """While the true gap is small, keep the exact camera frame openpilot is given, labelled with truth and perception."""
+    now = time.monotonic()
+    if truth[0] >= LEAD_FRAME_GAP_M or now - self.last_frame_save < LEAD_FRAME_PERIOD_S or self.frames_saved >= LEAD_FRAME_MAX:
+      return
+    self.last_frame_save = now
+    seen = self.seen_lead()
+    path = LEAD_FRAME_DIR / frame_name(self.frames_saved, truth, seen)
+    if self.frames_saved == 0:
+      print(f"lead log: saving camera frames to {LEAD_FRAME_DIR}", flush=True)
+    self.frames_saved += 1
+    # the array is overwritten by the next frame: copy it, then encode in the background
+    threading.Thread(target=save_lead_frame, args=(self.world.road_bgra_image.copy(), path, frame_label(truth, seen)),
+                     daemon=True).start()
+
+  def print_collisions(self):
+    for other, impulse in self.world.consume_collisions():
+      now = time.monotonic()
+      if now - self.last_collision_print >= COLLISION_LOG_GAP_S:
+        self.last_collision_print = now
+        print(collision_banner(other, impulse, self.simulator_state.speed, self.seen_lead()), flush=True)
 
   @abstractmethod
   def spawn_world(self, q):
@@ -193,7 +329,7 @@ class SimulatorBridge(ABC):
         # an explicit cancel also stops auto-engage from re-engaging right away
         self.past_startup_engaged = True
     elif m[0] == "blinker":
-      self.blinker = toggle_blinker(self.blinker, m[1])
+      self.blinker = blinker_for_command(m[1])
     elif m[0] == "ignition":
       s.ignition = not s.ignition
     elif m[0] == "hold":
@@ -237,7 +373,8 @@ class SimulatorBridge(ABC):
     self.simulated_car = SimulatedCar()
     self.simulated_sensors = SimulatedSensors()
     # The car thread has its own SubMaster; never share one across threads.
-    self.sm = messaging.SubMaster(['carState', 'carControl', 'controlsState', 'lateralPlan'])
+    self.sm = messaging.SubMaster(['carState', 'carControl', 'controlsState', 'lateralPlan', 'radarState',
+                                  'longitudinalPlan'])
 
     self._exit_event = threading.Event()
     threading.Thread(target=rk_loop, daemon=True,
@@ -252,7 +389,6 @@ class SimulatorBridge(ABC):
     s = self.simulator_state
     while self._keep_alive:
       s.cruise_button = 0
-      s.left_blinker = s.right_blinker = False
 
       manual_control_active = time.monotonic() < self.manual_control_deadline
       if not manual_control_active:
@@ -338,7 +474,16 @@ class SimulatorBridge(ABC):
         self.world.tick()
         self.world.read_cameras()
 
-      if self.rk.frame % 100 == 0:
+      if self.lead_log:
+        self.print_collisions()
+      if self.lead_log and self.rk.frame % 10 == 0:
+        truth = self.world.truth_lead()
+        # once a second, and ten times a second while something is close ahead
+        if self.rk.frame % 100 == 0 or (truth is not None and truth[0] < CLOSE_LEAD_LOG_M):
+          self.print_status(truth)
+        if truth is not None:
+          self.save_frame_near_lead(truth)
+      elif not self.lead_log and self.rk.frame % 100 == 0:
         self.print_status()
 
       self.started.value = True

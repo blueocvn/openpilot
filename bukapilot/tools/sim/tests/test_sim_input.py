@@ -6,7 +6,8 @@
 import unittest
 
 from selfdrive.controls.lib.desire_helper import lane_change_speed_min
-from tools.sim.bridge.common import (LONG_PRESS_FRAMES, SHORT_PRESS_FRAMES, SimulatorBridge, next_cruise_press, plan_manual_routing, toggle_blinker)
+from tools.sim.bridge.common import (LONG_PRESS_FRAMES, SHORT_PRESS_FRAMES, SimulatorBridge, blinker_for_command, lead_truth, collision_banner, frame_label, frame_name, save_lead_frame, next_cruise_press, plan_manual_routing, status_line)
+from tools.sim.lib.keyboard_ctrl import KEY_COMMANDS
 from tools.sim.lib.x11_keys import DEFAULT_WINDOW_TITLE, REPEAT_PERIOD, X11Keys, key_events, pressed_keycodes
 
 
@@ -68,10 +69,86 @@ class TestCruiseRamp(unittest.TestCase):
 
 
 class TestBlinkerLatch(unittest.TestCase):
-  def test_toggle_and_side_switch(self):
-    self.assertEqual(toggle_blinker(None, "left"), "left")
-    self.assertEqual(toggle_blinker("left", "left"), None)
-    self.assertEqual(toggle_blinker("left", "right"), "right")
+  def test_side_keys_latch_and_center_key_turns_off(self):
+    self.assertEqual(blinker_for_command("left"), "left")
+    self.assertEqual(blinker_for_command("right"), "right")
+    self.assertIsNone(blinker_for_command("off"))
+
+  def test_keys_map_to_blinker_commands(self):
+    self.assertEqual(KEY_COMMANDS["z"], "blinker_left")
+    self.assertEqual(KEY_COMMANDS["x"], "blinker_off")
+    self.assertEqual(KEY_COMMANDS["c"], "blinker_right")
+
+
+class TestLeadTruth(unittest.TestCase):
+  EGO = dict(ego_xy=(0.0, 0.0), ego_forward_xy=(1.0, 0.0), ego_half_length=2.0)
+
+  def test_nearest_in_lane_bumper_gap_and_speed(self):
+    others = [((30.0, 0.5), (8.0, 0.0), 1.0), ((12.0, -1.0), (5.0, 0.0), 1.0)]
+    gap, v_lead = lead_truth(others=others, **self.EGO)
+    self.assertAlmostEqual(gap, 12.0 - 2.0 - 1.0)
+    self.assertAlmostEqual(v_lead, 5.0)
+
+  def test_ignores_other_lane_and_behind(self):
+    others = [((20.0, 3.5), (5.0, 0.0), 1.0), ((-10.0, 0.0), (5.0, 0.0), 1.0)]
+    self.assertIsNone(lead_truth(others=others, **self.EGO))
+
+  def test_speed_is_along_ego_heading(self):
+    gap, v_lead = lead_truth((0.0, 0.0), (0.0, 1.0), 2.0, [((0.0, 20.0), (3.0, 4.0), 1.0)])
+    self.assertAlmostEqual(v_lead, 4.0)
+
+
+class TestStatusLine(unittest.TestCase):
+  OP = dict(engaged=True, v_cruise=80.0, alert='', accel=0.8, steer=-1.3, throttle=0.67, brake=0.0,
+            source='cruise', fcw=False)
+
+  def test_sources_are_labelled_and_error_is_camera_minus_truth(self):
+    line = status_line(self.OP, (118.0, 14.8, 0.59), 11.2, (94.7, 10.6))
+    for tag in ("[OP cmd]", "[OP sees]", "[SIM]", "[ERR] dRel=+23.3m vLead=+4.2"):
+      self.assertIn(tag, line)
+    self.assertIn("closing=+0.6 ttc=", line)
+
+  def test_missed_lead_and_contact(self):
+    line = status_line(self.OP, None, 20.0, (-0.1, 10.0))
+    self.assertIn("[OP sees] NO LEAD", line)
+    self.assertIn("[ERR] lead missed", line)
+    self.assertIn("ttc=CONTACT", line)
+
+  def test_without_ground_truth_only_openpilot_side(self):
+    line = status_line(self.OP, None, 11.2, None)
+    self.assertNotIn("[ERR]", line)
+    self.assertIn("[SIM] speed=11.2", line)
+
+
+class TestLeadFrame(unittest.TestCase):
+  def test_label_and_name_carry_truth_and_perception(self):
+    self.assertEqual(frame_label((8.1, 10.7), (23.2, 17.6, 0.98)), "SIM gap=8.1m vLead=10.7  |  OP dRel=23.2m vLead=17.6 prob=0.98")
+    self.assertIn("OP NO LEAD", frame_label((8.1, 10.7), None))
+    self.assertEqual(frame_name(3, (8.1, 10.7), (23.2, 17.6, 0.98)), "0003_gap008.1_op23.2.jpg")
+    self.assertEqual(frame_name(4, (-0.2, 10.7), None), "0004_gap000.0_opnone.jpg")
+
+  def test_saved_frame_is_a_jpeg_of_the_same_size(self):
+    import pathlib
+    import tempfile
+
+    import numpy as np
+    from PIL import Image
+    bgra = np.zeros((1208, 1928, 4), dtype=np.uint8)
+    with tempfile.TemporaryDirectory() as tmp:
+      path = pathlib.Path(tmp) / "sub" / "f.jpg"
+      save_lead_frame(bgra, path, "SIM gap=1.0m")
+      self.assertEqual(Image.open(path).size, (1928, 1208))
+
+
+class TestCollisionBanner(unittest.TestCase):
+  def test_banner_is_upper_case_and_says_what_openpilot_saw(self):
+    banner = collision_banner("vehicle.kawasaki.ninja", 1234.4, 20.4, (23.2, 17.6, 0.98))
+    self.assertEqual(banner, banner.upper())
+    for part in ("COLLISION", "COLLIDED WITH: VEHICLE.KAWASAKI.NINJA", "20.4 M/S", "1234", "DREL=23.2M"):
+      self.assertIn(part, banner)
+
+  def test_banner_when_openpilot_saw_nothing(self):
+    self.assertIn("SAW NO LEAD", collision_banner("vehicle.kawasaki.ninja", 10.0, 5.0, None))
 
 
 class TestManualRouting(unittest.TestCase):

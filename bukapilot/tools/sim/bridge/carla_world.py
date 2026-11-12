@@ -5,6 +5,7 @@ Kept compatible with the CARLA 0.9.12 Python API pinned in
 tools/sim/Dockerfile.bukapilot (no Client.load_world_if_different), and with
 the legacy bridge's camera mount, which matches the 0.8.13 EON-era model.
 """
+import collections
 import math
 import os
 import queue
@@ -12,7 +13,7 @@ import time
 
 import numpy as np
 
-from tools.sim.bridge.common import QueueMessage, QueueMessageType
+from tools.sim.bridge.common import QueueMessage, QueueMessageType, lead_truth
 from tools.sim.lib.common import H, W, SimulatorState, World, vec3
 
 
@@ -34,6 +35,7 @@ class CarlaWorld(World):
     self.actors = []
     self.traffic_manager = None
     self.motorcycles = []
+    self.collisions = collections.deque(maxlen=32)  # (other actor type, impulse N*s), filled by the CARLA sensor thread
     self.tick_count = 0
     self.camera_queue = queue.Queue(maxsize=4)
     self.latest_gnss = None
@@ -83,6 +85,7 @@ class CarlaWorld(World):
     self._spawn_camera()
     self._spawn_sensor("sensor.other.gnss", lambda e: setattr(self, "latest_gnss", e))
     self._spawn_sensor("sensor.other.imu", lambda e: setattr(self, "latest_imu", e))
+    self._spawn_sensor("sensor.other.collision", self._on_collision)
     if motorcycle:
       self._spawn_motorcycles(**motorcycle)
     self.spectator_mode = os.environ.get("CARLA_SPECTATOR_MODE", "chase")
@@ -194,6 +197,33 @@ class CarlaWorld(World):
       limit = float(bike.get_speed_limit()) or 50.0  # km/h
       pct = float(np.clip((1.0 - m["speed_kph"] / limit) * 100.0, -100.0, 100.0))
       self.traffic_manager.vehicle_percentage_speed_difference(bike, pct)
+
+  def _on_collision(self, event):
+    impulse = event.normal_impulse
+    self.collisions.append((event.other_actor.type_id, math.sqrt(impulse.x ** 2 + impulse.y ** 2 + impulse.z ** 2)))
+
+  def consume_collisions(self):
+    """Collisions of the ego car since the last call, as (other actor type, impulse). Logged, never sent to openpilot."""
+    out = []
+    while self.collisions:
+      out.append(self.collisions.popleft())
+    return out
+
+  def truth_lead(self):
+    """Ground truth gap/speed of the nearest motorcycle ahead in the ego lane. Logged, never sent to openpilot."""
+    if not self.motorcycles:
+      return None
+    ego = self.vehicle.get_transform()
+    forward = ego.get_forward_vector()
+    others = []
+    for m in self.motorcycles:
+      bike = m["actor"]
+      if not bike.is_alive:
+        continue
+      location, velocity = bike.get_location(), bike.get_velocity()
+      others.append(((location.x, location.y), (velocity.x, velocity.y), bike.bounding_box.extent.x))
+    return lead_truth((ego.location.x, ego.location.y), (forward.x, forward.y),
+                      self.vehicle.bounding_box.extent.x, others)
 
   def _sensor_transform(self):
     return self.carla.Transform(self.carla.Location(x=self.CAMERA_X, z=self.CAMERA_Z))
@@ -334,9 +364,12 @@ class CarlaWorld(World):
     self.exit_event.set()
     if self.traffic_manager is not None:
       self.traffic_manager.set_synchronous_mode(False)
+    # Stop every sensor before destroying anything: a collision event that names an already destroyed actor
+    # aborts the whole process from CARLA's own thread ("trying to operate on a destroyed actor").
+    for actor in self.actors:
+      if actor.is_alive and hasattr(actor, "stop"):
+        actor.stop()
     for actor in reversed(self.actors):
       if actor.is_alive:
-        if hasattr(actor, "stop"):
-          actor.stop()
         actor.destroy()
     self.world.apply_settings(self.original_settings)

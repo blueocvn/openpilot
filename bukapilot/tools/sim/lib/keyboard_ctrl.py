@@ -24,7 +24,9 @@ KEYBOARD_HELP = """
   |  r   | Reset simulation       |
   |  i   | Toggle ignition        |
   |  h   | Hold / release car     |
-  |  z/x | Left / right blinker (latched: press again to turn off) |
+  |  z   | Left blinker (latched)  |
+  |  x   | Blinker off (center)    |
+  |  c   | Right blinker (latched) |
   |  q   | Exit all               |
   | wasd | Control manually       |
 
@@ -32,7 +34,7 @@ KEYBOARD_HELP = """
   With a blinker on, the car engaged and a lane change possible, a/d in the
   blinker's direction only nudges the steering wheel: openpilot does the lane
   change (assisted lane change). Otherwise a/d steer by hand.
-  The blinker stays on until you press z/x again.
+  The blinker stays on until you press x.
 """
 
 KEY_COMMANDS = {
@@ -44,7 +46,8 @@ KEY_COMMANDS = {
   's': "brake_1.0",
   'd': "steer_0.15",
   'z': "blinker_left",
-  'x': "blinker_right",
+  'x': "blinker_off",
+  'c': "blinker_right",
   'i': "ignition",
   'h': "hold",
   'r': "reset",
