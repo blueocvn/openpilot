@@ -10,7 +10,8 @@ from tools.sim.bridge.common import (LONG_PRESS_FRAMES, SHORT_PRESS_FRAMES, Simu
 from tools.sim.bridge.bench_summary import judge, rule_for, split_label, table_rows
 from tools.sim.bridge.run_metrics import (OvertakeScript, RunMetrics, parse_obstacle_spec, project_half_length)
 from tools.sim.lib.keyboard_ctrl import KEY_COMMANDS
-from tools.sim.lib.x11_keys import DEFAULT_WINDOW_TITLE, REPEAT_PERIOD, X11Keys, key_events, pressed_keycodes
+from tools.sim.lib.x11_keys import (DEFAULT_WINDOW_TITLE, REPEAT_PERIOD, US_QWERTY_KEYCODES, X11Keys, build_keycode_map, char_to_keysym,
+                                    key_events, pressed_keycodes)
 
 
 class TestX11Keys(unittest.TestCase):
@@ -42,6 +43,40 @@ class TestX11Keys(unittest.TestCase):
     _, sent = key_events(set(), {"a"}, True, {}, 10.0)
     chars, sent = key_events({"a"}, set(), True, sent, 11.0)
     self.assertEqual((chars, sent), ([], {}))
+
+
+class TestKeycodeMap(unittest.TestCase):
+  def test_keysym_of_ascii_latin1_and_unicode_chars(self):
+    self.assertEqual(char_to_keysym("w"), 0x77)
+    self.assertEqual(char_to_keysym("é"), 0xe9)
+    self.assertEqual(char_to_keysym("ư"), 0x01000000 + 0x1b0)
+
+  def test_us_qwerty_positions_match_the_x11_keycodes(self):
+    self.assertEqual([US_QWERTY_KEYCODES[c] for c in "wasd"], [25, 38, 39, 40])
+    self.assertEqual([US_QWERTY_KEYCODES[c] for c in "123"], [10, 11, 12])
+
+  def test_finds_the_plain_key_in_the_layout(self):
+    # keycodes 38..40 carry a, s, d in group 1 (2 columns: plain, shift)
+    keysyms = [0x61, 0x41, 0x73, 0x53, 0x64, 0x44]
+    self.assertEqual(build_keycode_map("asd", keysyms, 38, 2), {38: "a", 39: "s", 40: "d"})
+
+  def test_layout_without_ascii_w_falls_back_to_the_qwerty_position(self):
+    # vietnamese style layout: the w key types ư and nothing carries an ascii w
+    keysyms = [0x01000000 + 0x1b0, 0x01000000 + 0x1af, 0x61, 0x41]   # keycode 25 = ư, keycode 26 = a
+    self.assertEqual(build_keycode_map("wa", keysyms, 25, 2), {26: "a", 25: "w"})
+
+  def test_fallback_never_steals_a_key_used_by_another_char(self):
+    # the layout puts ascii "a" on keycode 25 (the QWERTY w position) and has no w
+    self.assertEqual(build_keycode_map("wa", [0x61, 0x41], 25, 2), {25: "a"})
+
+  def test_unicode_char_is_found_through_its_unicode_keysym(self):
+    keysyms = [0x01000000 + 0x1b0, 0x01000000 + 0x1af]
+    self.assertEqual(build_keycode_map("ư", keysyms, 100, 2), {100: "ư"})
+
+  def test_plain_column_wins_over_altgr(self):
+    # "1" is at the AltGr column of keycode 10 and in the plain column of keycode 11: the plain key wins
+    keysyms = [0x01000000 + 0x103, 0x01000000 + 0x102, 0x31, 0x21, 0x31, 0x21, 0x32, 0x40]
+    self.assertEqual(build_keycode_map("1", keysyms, 10, 4), {11: "1"})
 
 
 class TestWindowTitles(unittest.TestCase):

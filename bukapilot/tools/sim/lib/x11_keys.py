@@ -6,6 +6,11 @@ polled with XQueryKeymap (no key grab: CARLA and every other window still get th
 only while the focused window, or one of its parents, is the CARLA window.
 
 Only libX11 through ctypes is used (libx11-6 is already in the bridge image).
+
+The key state is physical, so an input method (Telex, VNI, ...) cannot hide a key from it. What does depend on the
+keyboard layout is which keycode carries a character: a Vietnamese (or Russian, ...) layout may have no plain "w"
+keysym at all. So each character is looked up in every group and level of the active keymap (UTF-8 characters
+included, as Unicode keysyms), and falls back to the key at the same place on a US QWERTY keyboard.
 """
 import ctypes
 import ctypes.util
@@ -18,10 +23,43 @@ POLL_PERIOD = 0.02    # s between key state reads
 REPEAT_PERIOD = 0.1   # s between re-sent drive commands while a drive key is held; below MANUAL_TIMEOUT (0.25 s)
 HOLD_KEYS = frozenset("wasd")
 
+# X11 keycode (evdev code + 8) of each key on a US QWERTY keyboard, for layouts without the ASCII keysym.
+US_QWERTY_KEYCODES = {ch: code for code, ch in enumerate("1234567890", 10)}
+for _first, _row in ((24, "qwertyuiop"), (38, "asdfghjkl"), (52, "zxcvbnm")):
+  US_QWERTY_KEYCODES.update({ch: code for code, ch in enumerate(_row, _first)})
+
 
 def pressed_keycodes(keymap):
   """Set of keycodes down in a 32 byte XQueryKeymap bit vector."""
   return {i * 8 + bit for i, byte in enumerate(keymap) for bit in range(8) if byte >> bit & 1}
+
+
+def char_to_keysym(ch):
+  """X11 keysym of a character: Latin-1 keysyms equal the code point, anything else is 0x01000000 + code point."""
+  cp = ord(ch)
+  return cp if cp < 0x100 else 0x01000000 | cp
+
+
+def build_keycode_map(chars, keysyms, first_keycode, per_keycode):
+  """Map keycode -> character for the wanted chars.
+
+  keysyms is the flat XGetKeyboardMapping table (per_keycode columns per keycode, starting at first_keycode).
+  A character is taken from the lowest group/level column that holds its keysym (so the plain key wins over
+  AltGr or Shift variants). A character the layout lacks falls back to its US QWERTY position, unless that key
+  is already used for another wanted character.
+  """
+  wanted = {char_to_keysym(ch): ch for ch in chars}
+  found = {}
+  for column in range(per_keycode):
+    for index in range(len(keysyms) // per_keycode):
+      ch = wanted.get(keysyms[index * per_keycode + column])
+      if ch is not None and ch not in found.values():
+        found[first_keycode + index] = ch
+  for ch in chars:
+    code = US_QWERTY_KEYCODES.get(ch.lower())
+    if ch not in found.values() and code is not None and code not in found:
+      found[code] = ch
+  return found
 
 
 def key_events(prev_down, cur_down, focused, last_sent, now, hold_keys=HOLD_KEYS):
@@ -57,8 +95,9 @@ class X11Keys:
     x.XOpenDisplay.restype = ctypes.c_void_p
     x.XOpenDisplay.argtypes = [ctypes.c_char_p]
     x.XQueryKeymap.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-    x.XKeysymToKeycode.restype = ctypes.c_ubyte
-    x.XKeysymToKeycode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    x.XDisplayKeycodes.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)]
+    x.XGetKeyboardMapping.restype = ctypes.POINTER(ctypes.c_ulong)
+    x.XGetKeyboardMapping.argtypes = [ctypes.c_void_p, ctypes.c_ubyte, ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
     x.XGetInputFocus.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(ctypes.c_int)]
     x.XQueryTree.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong),
                              ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(ctypes.c_void_p),
@@ -69,13 +108,21 @@ class X11Keys:
     self.display = x.XOpenDisplay(None)
     if not self.display:
       raise RuntimeError("cannot open the X display (DISPLAY not set or not reachable)")
-    # for ASCII characters the X keysym equals the character code
-    self.keycode_to_char = {}
-    for ch in chars:
-      code = x.XKeysymToKeycode(self.display, ord(ch))
-      if code:
-        self.keycode_to_char[int(code)] = ch
+    self.keycode_to_char = self._keycode_map(chars)
     self.titles = [t.strip().lower() for t in (title or DEFAULT_WINDOW_TITLE).split(",") if t.strip()]
+
+  def _keycode_map(self, chars):
+    first, last = ctypes.c_int(), ctypes.c_int()
+    self.x.XDisplayKeycodes(self.display, ctypes.byref(first), ctypes.byref(last))
+    count, per_keycode = last.value - first.value + 1, ctypes.c_int()
+    table = self.x.XGetKeyboardMapping(self.display, first.value, count, ctypes.byref(per_keycode))
+    if not table:
+      return build_keycode_map(chars, [], first.value, 1)
+    try:
+      keysyms = table[:count * per_keycode.value]
+    finally:
+      self.x.XFree(table)
+    return build_keycode_map(chars, keysyms, first.value, per_keycode.value)
 
   def down_chars(self):
     keymap = ctypes.create_string_buffer(32)
