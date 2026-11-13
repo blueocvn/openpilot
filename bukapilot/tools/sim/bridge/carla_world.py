@@ -150,9 +150,22 @@ class CarlaWorld(World):
     for _ in range(8):  # hop across lanes (and the median) until one drives the other way
       wp = wp.get_left_lane()
       if wp is None:
-        return None
+        break
       if (wp.lane_id > 0) != (ego_wp.lane_id > 0) and wp.lane_type == driving:
         return wp, True
+    # a divided highway (Town04) has the other carriageway on a separate road that the lanes do not link to
+    wp = self._opposite_carriageway_lane(ego_wp)
+    return (wp, True) if wp is not None else None
+
+  def _opposite_carriageway_lane(self, ego_wp, max_offset_m=60.0):
+    """The nearest driving lane facing the other way, found by looking sideways from the ego lane, or None."""
+    carla = self.carla
+    location, yaw = ego_wp.transform.location, math.radians(ego_wp.transform.rotation.yaw)
+    for offset in range(2, int(max_offset_m)):  # CARLA is left-handed: +y is to the right, so the left is (sin, -cos)
+      probe = carla.Location(location.x + math.sin(yaw) * offset, location.y - math.cos(yaw) * offset, location.z)
+      wp = self.world.get_map().get_waypoint(probe, project_to_road=False, lane_type=carla.LaneType.Driving)
+      if wp is not None and self._yaw_change(wp, ego_wp) > 150.0:
+        return wp
     return None
 
   def _spawn_motorcycles(self, specs, models=None):

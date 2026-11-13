@@ -55,7 +55,7 @@ bash run.sh all --carla-town Town03 --carla-spawn-point <N>
 | `--obstacle-spec` | `loại:khoảng_cách_m[:tốc_độ_kmh],...`; loại = `motorcycle` / `car` / `car-across` / `barrier` / `container` | không đặt | vật cản trong làn của xe mình, cách điểm xuất phát `khoảng_cách_m` theo đường. Vật đứng yên; riêng `motorcycle` có thể kèm tốc độ để chạy cùng chiều. Ví dụ `container:150`. Chấm điểm tự động nhiều lần chạy: xem [`bench.md`](bench.md) |
 | `--cruise-kph` | km/h | không đặt (engage lúc đứng yên là 40) | sau khi engage, tự bấm nút để đưa tốc độ cài đặt về giá trị này (tăng hoặc giảm) |
 | `--no-auto-engage` | cờ | tự engage | không tự bấm SET; engage bằng phím `2` (hoặc `1`) |
-| `--duration` | số giây, vd `60` | không đặt (chạy đến khi bấm `q`) | chạy không cần bàn phím rồi tự thoát |
+| `--duration` | số giây, vd `60` | không đặt (chạy đến khi bấm `q`) | chạy **không có bàn phím** rồi tự thoát; chỉ dùng cho kịch bản tự động, không dùng khi cần bấm `z`, `a`, `x`... |
 | `--joystick` | cờ | tắt (điều khiển bằng bàn phím) | dùng vô-lăng/tay cầm `/dev/input/js0` |
 | `--host` (`--carla-host`) | địa chỉ IP | `127.0.0.1` (hoặc `$CARLA_HOST`) | server CARLA |
 | `--port` (`--carla-port`) | số cổng | `2000` (hoặc `$CARLA_PORT`) | cổng server CARLA |
@@ -195,8 +195,8 @@ Lưu ý khi đọc:
 ## Kịch bản: nhiều xe máy làm vật cản giữa đường
 
 Kiểm tra ba việc của xe: dừng trước vật cản, giữ khoảng cách với xe phía trước, và đánh lái tránh vật cản.
-Tất cả chạy trên đường thẳng `Town04_Opt` điểm 170 và bật `--lead-log` để so cái openpilot thấy với số thật của CARLA
-(cách đọc log: xem mục "Log kiểm tra khoảng cách" ở trên).
+Kịch bản 1 đến 4 chạy trên đường thẳng `Town04_Opt` điểm 170, kịch bản 5 chạy trên `Town01_Opt`. Tất cả bật `--lead-log`
+để so cái openpilot thấy với số thật của CARLA (cách đọc log: xem mục "Log kiểm tra khoảng cách" ở trên).
 
 `--obstacle-spec` đặt xe máy **đúng giữa làn của xe mình**, `khoảng_cách_m` tính từ điểm xuất phát theo đường. Xe máy
 không có tốc độ thì đứng yên; có tốc độ thì chạy thẳng với tốc độ không đổi. Mỗi xe máy rộng chừng 0,8 m và dài khoảng
@@ -209,6 +209,20 @@ Hai giới hạn cần biết:
   vì vậy được tách riêng.
 - Vật cản chỉ nằm ở giữa làn xe mình. Làn bên cạnh và làn ngược chiều dùng `--motorcycle-spec`
   (`left` / `right` / `oncoming`).
+
+### Ý nghĩa từng phần của lệnh
+
+| Phần của lệnh | Ý nghĩa |
+|---|---|
+| `--carla-town Town04_Opt` | map CARLA. `Town04_Opt` là cao tốc nhiều làn có dải phân cách; `Town01_Opt` là đường hai chiều hai làn |
+| `--carla-spawn-point 170` | điểm xuất phát của xe mình trên map đó. 170 của `Town04_Opt` là đoạn thẳng khoảng 450 m; 181 của `Town01_Opt` là đoạn thẳng khoảng 340 m, làn bên trái là làn ngược chiều |
+| `--obstacle-spec "motorcycle:200,motorcycle:205"` | đặt xe máy **trong làn của xe mình**. Mỗi mục là `loại:khoảng_cách_m[:km/h]`: `motorcycle:200` là một xe máy đứng yên cách điểm xuất phát 200 m; `motorcycle:60:35` là xe máy ở 60 m và chạy thẳng 35 km/h. Dùng để kiểm tra xe dừng hay bám theo |
+| `--motorcycle-spec "oncoming:150:40"` | thêm xe máy ở **làn khác**, do CARLA tự lái. Mỗi mục là `loại:khoảng_cách_m:km/h`, loại là `same` (cùng làn), `left` / `right` (làn bên cạnh cùng chiều) hoặc `oncoming` (làn ngược chiều). `oncoming:150:40` là xe máy chạy ngược chiều 40 km/h, xuất phát ở 150 m phía trước |
+| `--cruise-kph 60` | sau khi xe tự engage, tự bấm nút để đưa tốc độ cài đặt của cruise lên 60 km/h. Không có cờ này thì cruise chỉ đặt 40 km/h, thấp hơn xe máy nhanh và xe không bám được vào tình huống cần |
+| `--lead-log` | in log chi tiết mỗi giây: `[OP cmd]` openpilot ra lệnh gì, `[OP sees]` openpilot thấy xe phía trước cách bao xa, `[SIM]` khoảng cách thật từ CARLA, `[ERR]` chênh lệch giữa hai số đó. Dùng để chấm điểm đạt hay không |
+
+Cờ `--duration N` không có trong các lệnh này. Nó làm bridge chạy N giây không có bàn phím rồi tự thoát, để chạy tự động
+(`bench.sh`, smoke test). Các kịch bản ở đây cần bạn bấm `z`, `a`, `x` hoặc `q` nên không dùng nó.
 
 ### 1. Dừng trước một hàng xe máy đứng yên
 
@@ -233,7 +247,7 @@ khoảng cách ổn định.
 ```bash
 bash run.sh all --carla-town Town04_Opt --carla-spawn-point 170 \
   --obstacle-spec "motorcycle:60:15,motorcycle:120:30" \
-  --cruise-kph 60 --lead-log --duration 90
+  --cruise-kph 60 --lead-log
 ```
 
 Đạt khi: `plan=lead0` khi đã đuổi kịp, `[SIM] speed` về gần 15 km/h, `gap` ổn định (không dao động mạnh, không dưới
@@ -251,7 +265,7 @@ bash run.sh all --carla-town Town04_Opt --carla-spawn-point 170 \
   --cruise-kph 50 --lead-log
 ```
 
-1. Chờ xe đạt tốc độ cruise, khi `[SIM] gap` còn khoảng 100 m thì bấm `z` (hoặc `c` nếu làn phải trống).
+1. Chờ xe đạt tốc độ cruise, khi `[SIM] gap` còn khoảng 100 m thì bấm `z` (đổi sang trái; bên phải điểm 170 chỉ là làn lề đường).
 2. Bấm `a` (hoặc `d`) cùng hướng xi-nhan để openpilot đổi làn.
 3. Xe qua hàng xe máy, bấm `x` tắt xi-nhan.
 
@@ -273,6 +287,42 @@ bash run.sh all --carla-town Town04_Opt --carla-spawn-point 170 \
 
 Đạt khi: xe vẫn dừng trước hàng xe máy đứng yên như kịch bản 1, và `plan` không chuyển sang `lead0` vì xe ngược
 chiều (xe ngược chiều không nằm trong làn của xe mình, nên `[SIM]` không tính chúng).
+
+### 5. Vượt xe máy chậm trên đường hai chiều, làn bên trái có xe ngược chiều
+
+Dùng `Town01_Opt` điểm 181 (đã đọc từ bản đồ CARLA): đường hai chiều, đúng hai làn, rộng 4 m, không có dải phân cách. Xe
+mình ở làn phải (làn `-1`), bên phải là lề đường, **làn ngay bên trái là làn xe ngược chiều** (làn `1`). Muốn vượt xe
+máy chậm thì phải sang làn đó. Đoạn thẳng dài khoảng 340 m (điểm 67 và 63 tương tự, 360 đến 390 m).
+
+```bash
+bash run.sh all --carla-town Town01_Opt --carla-spawn-point 181 \
+  --obstacle-spec "motorcycle:60:35" \
+  --motorcycle-spec "oncoming:150:40,oncoming:300:40" \
+  --cruise-kph 50 --lead-log
+```
+
+Có một xe máy chậm 35 km/h trong làn mình (đủ nhanh để xe giữ trên 30 km/h lúc bám theo, là mức tối thiểu để đổi
+làn), và hai xe máy ngược chiều 40 km/h chạy trong làn trái, xuất phát ở 150 m và 300 m. Xe máy chậm rẽ theo đường
+ở khoảng 340 m (khoảng 30 giây sau khi xuất phát), nên chạy xong thì bấm `q` thoát hoặc `r` về điểm xuất phát.
+Không thêm `--duration` vào lệnh này, vì nó tắt bàn phím (xem bảng ở đầu mục).
+
+Thứ tự gần đúng (ước tính của tôi, chưa đo): xe ngược chiều thứ nhất lướt qua sau khoảng 6 giây, khi xe mình còn
+đang đuổi theo xe máy chậm; xe thứ hai tới ngang xe mình sau khoảng 12 giây, đúng lúc xe mình bám sát xe máy chậm.
+Xem vị trí thật bằng cửa sổ CARLA (góc nhìn bám sau xe), không cần chờ theo số giây.
+
+**Lần 1, chờ cho thoáng.** Bám xe máy chậm (`plan=lead0`), đợi cả hai xe ngược chiều đi qua, rồi bấm `z`, `a` để sang
+trái và vượt, rồi `x`. Đạt khi xe vượt xong, về làn cũ hoặc ở lại làn trái không va chạm, không có khối `#`.
+
+**Lần 2, sang trái khi xe ngược chiều còn khoảng 100 m.** Bấm `z`, `a` ngay lúc xe ngược chiều đang lao tới. Đây là ca để
+xem hệ thống có chặn hay không: hiện tại **không có gì chặn**. Điều kiện bắt đầu đổi làn trong
+`desire_helper.py` chỉ gồm xi-nhan, tốc độ từ 30 km/h trở lên, thời gian chờ sau lần hủy và mép đường. Không có kiểm tra
+xe ngược chiều, và mô phỏng không báo điểm mù. Nên mong đợi va chạm đầu đối đầu nếu người lái không tự dừng lại. Dùng
+ca này để chứng minh hệ thống cần một kiểm tra như vậy trước khi sửa, không phải một ca "phải đạt".
+
+Nếu lần 2 va chạm, log in khối `#` kèm `COLLIDED WITH: VEHICLE.KAWASAKI.NINJA` và tốc độ hai xe.
+
+Trên `Town04_Opt` (cao tốc) xe ngược chiều chạy ở đường 1401 bên kia dải phân cách, cách xe mình khoảng 20 m, nên không
+đối đầu được; dùng `Town01_Opt` cho ca này.
 
 ### Chấm điểm tự động
 
