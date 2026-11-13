@@ -6,7 +6,7 @@
 import unittest
 
 from selfdrive.controls.lib.desire_helper import lane_change_speed_min
-from tools.sim.bridge.common import (LONG_PRESS_FRAMES, SHORT_PRESS_FRAMES, SimulatorBridge, blinker_for_command, lead_truth, nearest_ahead, collision_banner, frame_label, frame_name, save_lead_frame, next_cruise_press, next_cruise_action, plan_manual_routing, status_line)
+from tools.sim.bridge.common import (LONG_PRESS_FRAMES, SHORT_PRESS_FRAMES, SimulatorBridge, blinker_for_command, lead_truth, nearest_ahead, collision_banner, frame_label, frame_name, save_lead_frame, next_cruise_press, next_cruise_action, plan_manual_routing, status_line, cruise_button_step, CRUISE_RELEASE_FRAMES)
 from tools.sim.bridge.bench_summary import judge, rule_for, split_label, table_rows
 from tools.sim.bridge.run_metrics import (OvertakeScript, RunMetrics, parse_obstacle_spec, project_half_length)
 from tools.sim.lib.keyboard_ctrl import KEY_COMMANDS
@@ -460,15 +460,22 @@ class TestManualRouting(unittest.TestCase):
   def test_nudge_with_pedal_key_keeps_pedals_manual(self):
     self.assertEqual(plan_manual_routing(True, -0.15, 1.0, 0.0, "left", True, True), (True, False))
 
-  def test_wrong_direction_no_blinker_or_not_engaged_override_everything(self):
-    self.assertEqual(plan_manual_routing(True, 0.15, 0.0, 0.0, "left", True, True), (True, True))
-    self.assertEqual(plan_manual_routing(True, -0.15, 0.0, 0.0, None, True, True), (True, True))
-    self.assertEqual(plan_manual_routing(True, -0.15, 0.0, 0.0, "left", False, True), (True, True))
+  def test_wrong_direction_no_blinker_or_not_engaged_steer_by_hand_but_keep_pedals(self):
+    self.assertEqual(plan_manual_routing(True, 0.15, 0.0, 0.0, "left", True, True), (False, True))
+    self.assertEqual(plan_manual_routing(True, -0.15, 0.0, 0.0, None, True, True), (False, True))
+    self.assertEqual(plan_manual_routing(True, -0.15, 0.0, 0.0, "left", False, True), (False, True))
 
   def test_blinker_direction_steers_by_hand_when_no_lane_change_can_start(self):
-    # lane change state off (for example below the lane change speed): the key must steer the car
-    self.assertEqual(plan_manual_routing(True, -0.15, 0.0, 0.0, "left", True, False), (True, True))
-    self.assertEqual(plan_manual_routing(True, 0.15, 0.0, 0.0, "right", True, False), (True, True))
+    # lane change state off (for example below the lane change speed): the key must steer the car,
+    # openpilot keeps the pedals so it still holds the distance to the lead
+    self.assertEqual(plan_manual_routing(True, -0.15, 0.0, 0.0, "left", True, False), (False, True))
+    self.assertEqual(plan_manual_routing(True, 0.15, 0.0, 0.0, "right", True, False), (False, True))
+
+  def test_pedal_key_takes_the_pedals_even_without_a_steer_key(self):
+    # a throttle key alone must not straighten the wheel
+    self.assertEqual(plan_manual_routing(True, 0.0, 1.0, 0.0, None, True, False), (True, False))
+    self.assertEqual(plan_manual_routing(True, 0.0, 0.0, 1.0, None, True, True), (True, False))
+    self.assertEqual(plan_manual_routing(True, -0.15, 0.0, 1.0, "left", True, False), (True, True))
 
   def test_no_key_press_overrides_nothing(self):
     self.assertEqual(plan_manual_routing(False, 0.0, 0.0, 0.0, "left", True, True), (False, False))
@@ -480,6 +487,40 @@ class TestManualRouting(unittest.TestCase):
     torque = steer * SimulatorBridge.MANUAL_TORQUE
     self.assertGreater(torque, 1200)  # Honda Civic STEER_THRESHOLD default
     self.assertLess(float(KEY_COMMANDS["d"].split("_")[1]) * SimulatorBridge.MANUAL_TORQUE, -1200)
+
+
+class TestCruiseButtonRelease(unittest.TestCase):
+  def play(self, last_pressed, idle, button, frames):
+    sent, held = [], frames
+    while held > 0:
+      out, held = cruise_button_step(last_pressed, idle, button, held)
+      sent.append(out)
+      if out:
+        last_pressed, idle = out, 0
+      else:
+        idle += 1
+    return sent
+
+  def test_button_after_idle_is_sent_at_once(self):
+    self.assertEqual(self.play(0, 0, 4, 3), [4, 4, 4])
+
+  def test_different_button_right_after_another_waits_for_the_release(self):
+    # 3 -> 4 straight would never report the release of 3 and leave controlsd's decelCruise timer running
+    sent = self.play(3, 0, 4, 5)
+    self.assertEqual(sent, [0] * CRUISE_RELEASE_FRAMES + [4] * 5)
+
+  def test_a_one_frame_gap_is_not_enough(self):
+    # the autoengage pulse ends, one frame of none, then the cruise ramp: controlsd can read both frames in one batch
+    self.assertEqual(self.play(3, 1, 4, 2), [0] * (CRUISE_RELEASE_FRAMES - 1) + [4, 4])
+
+  def test_enough_idle_frames_need_no_wait(self):
+    self.assertEqual(self.play(3, CRUISE_RELEASE_FRAMES, 4, 2), [4, 4])
+
+  def test_same_button_needs_no_release(self):
+    self.assertEqual(self.play(4, 0, 4, 2), [4, 4])
+
+  def test_waiting_for_the_release_does_not_shorten_a_long_press(self):
+    self.assertEqual(self.play(3, 0, 4, 55).count(4), 55)
 
 
 class TestLaneChangeSpeedGate(unittest.TestCase):

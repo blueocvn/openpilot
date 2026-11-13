@@ -52,16 +52,17 @@ def blinker_for_command(requested):
 def plan_manual_routing(manual_active, steer, throttle, brake, blinker, engaged, lane_change_ready):
   """Which parts of a manual key press override openpilot: (pedals_manual, steering_manual).
 
-  A steer key in the direction of the blinker is only a nudge (steering torque goes to the car, openpilot
-  keeps steering) while the car is engaged and openpilot can act on it, that is `lane_change_ready`: the
-  lane change state is not `off`. Steer keys: a = -0.15 (left), d = +0.15.
-  In every other case a key press overrides everything, so the user can always steer by hand.
+  Like on the real car, a steer key only takes the steering and a throttle or brake key only takes the pedals.
+  So openpilot keeps the following distance and brakes for the lead while the car is steered by hand, and keeps
+  steering while the driver adds throttle. A steer key in the
+  direction of the blinker is only a nudge (steering torque goes to the car, openpilot keeps steering) while the
+  car is engaged and openpilot can act on it, that is `lane_change_ready`: the lane change state is not `off`.
+  Steer keys: a = -0.15 (left), d = +0.15. In every other case a steer key steers by hand.
   """
+  pedals_manual = manual_active and (throttle != 0 or brake != 0)
   nudge = (manual_active and engaged and lane_change_ready and steer != 0 and
            ((blinker == "left" and steer < 0) or (blinker == "right" and steer > 0)))
-  if nudge:
-    return (throttle != 0 or brake != 0), False
-  return manual_active, manual_active
+  return pedals_manual, manual_active and steer != 0 and not nudge
 
 
 def nearest_ahead(ego_xy, ego_forward_xy, ego_half_length, others, lateral_limit):
@@ -190,6 +191,27 @@ def next_cruise_action(v_cruise, target):
   return None if frames is None else (CruiseButtons.DECEL_SET, frames)
 
 
+CRUISE_RELEASE_FRAMES = 50   # frames with no button before a different cruise button; longer than a controlsd stall,
+                             # which reads several CAN frames at once and would not see a short gap
+
+
+def cruise_button_step(last_pressed, idle_frames, held_button, held_frames):
+  """One frame of a held cruise button: (button to send, held_frames).
+
+  A different button must not follow another one until the car has seen CRUISE_RELEASE_FRAMES frames of none. The
+  Honda interface reports one event per change, named after the new button, so a 3 -> 0 -> 4 change that controlsd
+  reads in one batch looks like 3 -> 4: the release of 3 is never reported, controlsd keeps its decelCruise timer
+  running and takes a long press (-5 km/h) every 0.5 s for good.
+  A press that has to wait does not lose frames, so a long press stays long.
+  last_pressed: the last button sent (0 before any); idle_frames: frames sent with no button since then.
+  """
+  if held_frames <= 0:
+    return 0, held_frames
+  if last_pressed not in (0, held_button) and idle_frames < CRUISE_RELEASE_FRAMES:
+    return 0, held_frames
+  return held_button, held_frames - 1
+
+
 def rk_loop(function, hz, exit_event: threading.Event):
   rk = Ratekeeper(hz, None)
   while not exit_event.is_set():
@@ -240,6 +262,8 @@ class SimulatorBridge(ABC):
     # independent 100 Hz CAN thread and carstate both see them.
     self.held_button = 0
     self.held_frames = 0
+    self.last_cruise_pressed = 0   # the last cruise button sent to the car
+    self.cruise_idle_frames = 0    # frames sent with no cruise button since then
     # one-shot: after engaging, raise the set speed to this value (the engage default is only 40 km/h)
     self.cruise_kph_pending = cruise_kph
     self.cruise_press_wait = 0
@@ -517,8 +541,8 @@ class SimulatorBridge(ABC):
         manual_control_active = time.monotonic() < self.manual_control_deadline
 
       if self.held_frames > 0:
-        self.held_frames -= 1
-        s.cruise_button = self.held_button
+        s.cruise_button, self.held_frames = cruise_button_step(
+          self.last_cruise_pressed, self.cruise_idle_frames, self.held_button, self.held_frames)
       else:
         self.held_button = 0
 
@@ -560,6 +584,11 @@ class SimulatorBridge(ABC):
         # Honda non-PCM cruise engages on the SET button *release*. Hold each
         # phase for 20 frames so the independent 100 Hz CAN thread sees it.
         s.cruise_button = CruiseButtons.DECEL_SET if (self.rk.frame // 20) % 2 == 0 else 0
+
+      if s.cruise_button:
+        self.last_cruise_pressed, self.cruise_idle_frames = s.cruise_button, 0
+      else:
+        self.cruise_idle_frames += 1
 
       if self.hold_car and not manual_control_active:
         throttle_out, brake_out, steer_out = 0.0, 1.0, 0.0

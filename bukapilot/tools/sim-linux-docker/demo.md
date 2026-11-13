@@ -141,7 +141,7 @@ Xe dùng tính năng đổi làn có hỗ trợ (ALC) sẵn có của bukapilot,
 3. Xi-nhan không tự tắt: đổi làn xong, bấm `x` (về giữa) để tắt. Khi xi-nhan còn bật, bấm `a` / `d`
    cùng hướng sẽ đổi làn thêm lần nữa.
 4. Khi chưa thể đổi làn (ví dụ xe chạy dưới tốc độ tối thiểu), `a` / `d` vẫn lái tay bình thường dù xi-nhan
-   đang bật.
+   đang bật. Phím lái chỉ lấy vô lăng; ga và phanh vẫn do openpilot giữ (còn giữ khoảng cách, còn phanh cho xe máy phía trước). Muốn tự đạp ga hoặc phanh thì dùng `w` / `s`.
 
 **Điều kiện:** trong mô phỏng, ALC chỉ bắt đầu khi xe chạy từ 30 km/h trở lên (biến `ALC_MIN_SPEED_KPH`,
 mặc định `30`). Trên xe thật mức này vẫn là 30 mph, khoảng 48,3 km/h (`LANE_CHANGE_SPEED_MIN` trong

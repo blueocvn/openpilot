@@ -182,6 +182,8 @@ Phím lái chỉ là **cú đánh lái nhẹ** (mô-men vẫn gửi lên CAN, nh
 
 Mọi trường hợp khác, phím lái vẫn là lái tay như cũ. Vì vậy người dùng luôn giành lại được vô lăng: bấm ngược hướng xi-nhan, hoặc tắt xi-nhan rồi bấm.
 
+Phím lái chỉ lấy vô lăng, không lấy ga và phanh; phím `w` / `s` chỉ lấy ga và phanh, không lấy vô lăng. Giống xe thật, khi bạn lái tay thì openpilot vẫn giữ khoảng cách và phanh cho xe phía trước. Trước đây phím lái ngoài trường hợp đánh lái nhẹ cũng cắt luôn ga và phanh của openpilot, nên xe trôi tự do và không giữ khoảng cách (ví dụ khi bấm `a` / `d` lúc chưa đổi làn được, hoặc sau khi đổi làn xong mà xi-nhan còn bật).
+
 ### Trình tự một lần vượt xe máy
 
 ```mermaid
