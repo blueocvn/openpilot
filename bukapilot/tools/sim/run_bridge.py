@@ -32,6 +32,18 @@ def parse_motorcycle_spec(spec):
   return specs
 
 
+def bridge_actors(args):
+  """(motorcycle argument for CarlaBridge, obstacles) from --motorcycle* and --obstacle-spec.
+
+  --obstacle-spec items are [(kind, distance_m, speed_kph)]: placed in the ego lane on the straight road ahead; a
+  motorcycle with a speed drives straight ahead at that constant speed (it never turns at a junction).
+  """
+  from tools.sim.bridge.run_metrics import parse_obstacle_spec
+  bikes = parse_motorcycle_spec(args.motorcycle_spec or DEFAULT_MOTORCYCLE_SPEC) if (args.motorcycle or args.motorcycle_spec) else []
+  motorcycle = {"specs": bikes, "models": [args.motorcycle_model] if args.motorcycle_model else None} if bikes else None
+  return motorcycle, parse_obstacle_spec(args.obstacle_spec) if args.obstacle_spec else None
+
+
 def parse_args(add_args=None):
   parser = argparse.ArgumentParser(description='Bridge between CARLA and bukapilot.')
   parser.add_argument('--joystick', action='store_true', help='read /dev/input/js0 instead of the keyboard')
@@ -52,10 +64,14 @@ def parse_args(add_args=None):
   parser.add_argument('--motorcycle-model', default=None,
                       help='one blueprint for all bikes (default: cycle through kawasaki.ninja, yamaha.yzf, '
                            'harley-davidson.low_rider)')
+  parser.add_argument('--obstacle-spec', default=None, metavar='KIND:DISTANCE_M[:KPH],...',
+                      help='obstacles in the ego lane, distance_m ahead of the spawn point along the straight road. kind is '
+                           'motorcycle | car | car-across | barrier | container; they stand still, except a '
+                           'motorcycle with KPH, which drives straight ahead at that constant speed. Example: container:200')
   parser.add_argument('--no-carla-keys', dest='carla_keys', action='store_false',
                       help='do not read keys from the CARLA window (Linux Docker); use the terminal only')
   parser.add_argument('--cruise-kph', type=float, default=None, metavar='KPH',
-                      help='after engaging, raise the cruise set speed to this value (engaging at standstill sets only 40 km/h)')
+                      help='after engaging, move the cruise set speed to this value, up or down (engaging at standstill sets 40 km/h)')
   parser.add_argument('--no-auto-engage', dest='auto_engage', action='store_false',
                       help='do not press SET automatically; engage with key 2 (or 1)')
   parser.add_argument('--launch-openpilot', action='store_true',
@@ -88,13 +104,12 @@ def main():
     relay = subprocess.Popen([sys.executable, os.path.join(SIM_DIR, "lib", "ui_relay.py")],
                              env=os.environ.copy(), start_new_session=True)
 
+  motorcycle, obstacles = bridge_actors(args)
   queue = Queue()
   bridge = CarlaBridge(host=args.host, port=args.port, town=args.town, spawn_point=args.spawn_point,
                        vehicle=args.vehicle, low_quality=args.low_quality, weather=args.weather,
                        auto_engage=args.auto_engage, test_run=args.duration is not None, cruise_kph=args.cruise_kph,
-                       motorcycle=({"specs": parse_motorcycle_spec(args.motorcycle_spec or DEFAULT_MOTORCYCLE_SPEC),
-                                    "models": [args.motorcycle_model] if args.motorcycle_model else None}
-                                   if (args.motorcycle or args.motorcycle_spec) else None))
+                       motorcycle=motorcycle, obstacles=obstacles)
   bridge_p = bridge.run(queue)
   try:
     if args.duration is not None:

@@ -26,6 +26,7 @@ import cereal.messaging as messaging
 from cereal import log
 from common.realtime import Ratekeeper
 from selfdrive.car.honda.values import CruiseButtons
+from tools.sim.bridge.run_metrics import FrameRecorder, OvertakeScript, RunMetrics
 from tools.sim.lib.common import SimulatorState
 from tools.sim.lib.params import set_params_enabled
 
@@ -63,12 +64,10 @@ def plan_manual_routing(manual_active, steer, throttle, brake, blinker, engaged,
   return manual_active, manual_active
 
 
-def lead_truth(ego_xy, ego_forward_xy, ego_half_length, others, lane_half_width=2.0):
-  """Simulator ground truth of the nearest object ahead in the ego lane: (bumper gap m, speed along ego heading m/s).
-
-  For logging only, to grade what the camera model reports. It is never given to openpilot: the real car has a
-  camera and nothing else. `others` is an iterable of (xy, velocity_xy, half_length).
-  """
+def nearest_ahead(ego_xy, ego_forward_xy, ego_half_length, others, lateral_limit):
+  """Nearest object ahead within `lateral_limit` m of the ego centre line: (bumper gap m, speed along ego heading
+  m/s, lateral offset m with left positive as openpilot's yRel), or None. `others` is an iterable of
+  (xy, velocity_xy, half_length), the half-length along the ego heading."""
   fx, fy = ego_forward_xy
   norm = float(np.hypot(fx, fy)) or 1.0
   fx, fy = fx / norm, fy / norm
@@ -76,13 +75,23 @@ def lead_truth(ego_xy, ego_forward_xy, ego_half_length, others, lane_half_width=
   for (ox, oy), (vx, vy), half_length in others:
     dx, dy = ox - ego_xy[0], oy - ego_xy[1]
     longitudinal = dx * fx + dy * fy
-    lateral = abs(dx * fy - dy * fx)
-    if longitudinal <= 0.0 or lateral > lane_half_width:
+    lateral = dx * fy - dy * fx   # CARLA is left-handed (x forward, y right): this is positive to the left
+    if longitudinal <= 0.0 or abs(lateral) > lateral_limit:
       continue
     gap = longitudinal - ego_half_length - half_length
     if best is None or gap < best[0]:
-      best = (gap, vx * fx + vy * fy)
+      best = (gap, vx * fx + vy * fy, lateral)
   return best
+
+
+def lead_truth(ego_xy, ego_forward_xy, ego_half_length, others, lane_half_width=2.0):
+  """Simulator ground truth of the nearest object ahead in the ego lane: (bumper gap m, speed along ego heading m/s).
+
+  For logging only, to grade what the camera model reports. It is never given to openpilot: the real car has a
+  camera and nothing else. `others` is an iterable of (xy, velocity_xy, half_length).
+  """
+  found = nearest_ahead(ego_xy, ego_forward_xy, ego_half_length, others, lane_half_width)
+  return None if found is None else found[:2]
 
 
 CLOSE_LEAD_LOG_M = 40.0   # log at 10 Hz while the true gap to the lead is below this
@@ -90,6 +99,7 @@ LEAD_FRAME_GAP_M = 15.0    # save the camera frame (what the model receives) whi
 LEAD_FRAME_PERIOD_S = 0.5  # ... at most this often,
 LEAD_FRAME_MAX = 200       # ... and at most this many per run
 LEAD_FRAME_DIR = pathlib.Path(os.environ.get("LEAD_FRAME_DIR") or pathlib.Path(__file__).resolve().parents[3] / ".carla" / "lead-frames")
+OVERTAKE_TAIL_S = 3.0      # the overtake run ends this long after the scripted driver is done
 COLLISION_LOG_GAP_S = 1.0  # one collision banner per second at most (CARLA reports every tick of a sustained contact)
 
 
@@ -163,12 +173,21 @@ CRUISE_PRESS_GAP = 25     # idle frames between presses
 
 
 def next_cruise_press(v_cruise, target):
-  """Frames to hold RES+ to move the set speed toward `target` (long press +5, short press +1), or None."""
+  """Frames to hold RES+ to move the set speed up toward `target` (long press +5, short press +1), or None."""
   if target - v_cruise >= 5:
     return LONG_PRESS_FRAMES
   if target - v_cruise >= 1:
     return SHORT_PRESS_FRAMES
   return None
+
+
+def next_cruise_action(v_cruise, target):
+  """(button, frames) that moves the set speed toward `target`, up with RES+ or down with SET-, or None when there."""
+  if v_cruise < target:
+    frames = next_cruise_press(v_cruise, target)
+    return None if frames is None else (CruiseButtons.RES_ACCEL, frames)
+  frames = next_cruise_press(-v_cruise, -target)   # the same thresholds, going down
+  return None if frames is None else (CruiseButtons.DECEL_SET, frames)
 
 
 def rk_loop(function, hz, exit_event: threading.Event):
@@ -231,6 +250,22 @@ class SimulatorBridge(ABC):
     self.last_collision_print = float("-inf")
     self.last_frame_save = float("-inf")
     self.frames_saved = 0
+    # Benchmark scoring, all off unless asked for (see tools/sim-linux-docker/bench.sh):
+    #   LEAD_RESULT_FILE=<path>  one JSON result per run, written at exit; the run also ends by itself (collision,
+    #                            stopped for good, LEAD_RUN_DISTANCE_M driven)
+    #   LEAD_SCENARIO=<label>    copied into the result;  LEAD_OVERTAKE=1: a scripted driver steers out and passes
+    #   LEAD_RECORD_DIR=<dir>    every LEAD_RECORD_EVERY-th camera frame (JPEG) plus truth.jsonl with ground truth
+    self.result_file = os.environ.get("LEAD_RESULT_FILE") or None
+    self.overtake = OvertakeScript() if os.environ.get("LEAD_OVERTAKE") == "1" else None
+    self.metrics = None
+    if self.result_file:
+      distance = os.environ.get("LEAD_RUN_DISTANCE_M")
+      self.metrics = RunMetrics(os.environ.get("LEAD_SCENARIO", ""), float(distance) if distance else None,
+                                stop_when_stopped=self.overtake is None)
+    record_dir = os.environ.get("LEAD_RECORD_DIR")
+    self.recorder = FrameRecorder(record_dir, int(os.environ.get("LEAD_RECORD_EVERY") or 1)) if record_dir else None
+    self.end_reason = None
+    self.wall_start = None   # (wall clock, simulated clock) at the first scored sample
 
   def reset_engagement(self):
     self.past_startup_engaged = False
@@ -281,6 +316,11 @@ class SimulatorBridge(ABC):
     lead = self.sm['radarState'].leadOne
     return (lead.dRel, lead.vLead, lead.modelProb) if lead.status else None
 
+  def seen_y_rel(self):
+    """yRel (m, left positive) of the lead openpilot perceives, or None."""
+    lead = self.sm['radarState'].leadOne
+    return lead.yRel if lead.status else None
+
   def save_frame_near_lead(self, truth):
     """While the true gap is small, keep the exact camera frame openpilot is given, labelled with truth and perception."""
     now = time.monotonic()
@@ -296,12 +336,68 @@ class SimulatorBridge(ABC):
     threading.Thread(target=save_lead_frame, args=(self.world.road_bgra_image.copy(), path, frame_label(truth, seen)),
                      daemon=True).start()
 
-  def print_collisions(self):
+  def drain_collisions(self):
+    """Take the ego car's collisions from the simulator: score them, and print the banner when --lead-log is on."""
     for other, impulse in self.world.consume_collisions():
+      if self.metrics is not None:
+        self.metrics.collide(other, self.simulator_state.speed)
       now = time.monotonic()
-      if now - self.last_collision_print >= COLLISION_LOG_GAP_S:
+      if self.lead_log and now - self.last_collision_print >= COLLISION_LOG_GAP_S:
         self.last_collision_print = now
         print(collision_banner(other, impulse, self.simulator_state.speed, self.seen_lead()), flush=True)
+
+  def sim_time(self):
+    """Simulated seconds: every loop frame is 10 ms of simulation, however long it took on the wall clock.
+    Scoring uses this clock, so a slow machine does not change distances or decelerations."""
+    return self.rk.frame * 0.01
+
+  def score_sample(self, truth):
+    """One 10 Hz benchmark sample: ground truth next to what the car did. Measurement only."""
+    cs = self.sm['controlsState']
+    y_pair = None
+    if self.overtake is not None and self.overtake.active:
+      y_seen, y_true = self.seen_y_rel(), self.world.truth_lateral()
+      y_pair = (y_seen, y_true) if y_seen is not None and y_true is not None else None
+    if self.wall_start is None and self.metrics.t0 is not None:
+      self.wall_start = (time.monotonic(), self.sim_time())
+    self.metrics.sample(self.sim_time(), self.simulator_state.speed, truth, self.seen_lead(), cs.vCruise,
+                        brake=self.last_controls[2], engaged=bool(self.simulator_state.is_engaged),
+                        in_overtake=self.overtake is not None and self.overtake.active, y_rel_pair=y_pair)
+
+  def record_frame(self):
+    """Hand the camera frame openpilot was just given to the recorder, with the simulator's truth for that frame."""
+    truth, lateral = self.world.truth_lead(), self.world.truth_lateral()
+    seen = self.seen_lead()
+    self.recorder.add(self.world.road_bgra_image, {
+      "tick": self.world.tick_count, "wall_s": time.monotonic(), "engaged": bool(self.simulator_state.is_engaged),
+      "ego_speed": self.simulator_state.speed, "pose": self.world.ego_pose(),
+      "truth_gap": None if truth is None else truth[0], "truth_v": None if truth is None else truth[1],
+      "truth_lateral": lateral, "op_lead": None if seen is None else list(seen),
+      "op_accel": float(self.sm['carControl'].actuators.accel), "v_cruise_kph": float(self.sm['controlsState'].vCruise)})
+
+  def intended_gap(self, summary):
+    """The gap the longitudinal planner aims for at the steady speeds of a run, or None without a steady follow."""
+    if "steady_gap_m" not in summary:
+      return None
+    try:
+      from selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import desired_follow_distance, get_desired_tf
+      tf = get_desired_tf(self.sm['carState'].cruiseState.setDistance)
+      return desired_follow_distance(summary["steady_ego_speed_mps"], summary["steady_obstacle_speed_mps"], 0, tf)
+    except Exception as exc:  # measurement must never break the shutdown
+      print(f"intended gap unavailable: {exc}", flush=True)
+      return None
+
+  def finish_run(self):
+    if self.recorder is not None:
+      self.recorder.close()
+    if self.metrics is not None:
+      self.metrics.end_reason = self.end_reason
+      extra = {"intended_gap_m": self.intended_gap(self.metrics.summary())}
+      if self.wall_start is not None and time.monotonic() > self.wall_start[0]:
+        # 1.0 = the simulation kept up with real time; below 1 openpilot saw the world in slow motion
+        extra["realtime_factor"] = (self.sim_time() - self.wall_start[1]) / (time.monotonic() - self.wall_start[0])
+      self.metrics.write(self.result_file, extra)
+      print(f"benchmark result: {self.result_file} ({self.end_reason or 'ended'})", flush=True)
 
   @abstractmethod
   def spawn_world(self, q):
@@ -364,6 +460,12 @@ class SimulatorBridge(ABC):
       return float(np.clip(accel / self.THROTTLE_ACCEL, 0.0, 1.0)), 0.0
     return 0.0, float(np.clip(-accel / self.BRAKE_DECEL, 0.0, 1.0))
 
+  def script_end_reason(self):
+    """The overtake run ends a few seconds after the scripted driver is done."""
+    if self.overtake is None or not self.overtake.finished_playing(self.sim_time() - OVERTAKE_TAIL_S):
+      return None
+    return "overtake"
+
   def _run(self, q):
     # imported here so the bridge module can be loaded without the sim deps
     from tools.sim.lib.simulated_car import SimulatedCar
@@ -393,6 +495,11 @@ class SimulatorBridge(ABC):
       manual_control_active = time.monotonic() < self.manual_control_deadline
       if not manual_control_active:
         self.manual_throttle = self.manual_steer = self.manual_brake = 0.0
+
+      if self.overtake is not None:
+        armed = self.metrics is not None and self.metrics.moved_fast
+        for cmd in self.overtake.commands(self.sim_time(), s.speed, armed):
+          self._handle_command(cmd, s)
 
       if not q.empty():
         message = q.get()
@@ -426,12 +533,12 @@ class SimulatorBridge(ABC):
       if self.cruise_press_wait > 0:
         self.cruise_press_wait -= 1
       elif self.cruise_kph_pending and s.is_engaged and self.held_frames == 0:
-        frames = next_cruise_press(cs.vCruise, self.cruise_kph_pending)
-        if frames is None:
+        action = next_cruise_action(cs.vCruise, self.cruise_kph_pending)
+        if action is None:
           self.cruise_kph_pending = None
         else:
-          self.held_button, self.held_frames = CruiseButtons.RES_ACCEL, frames
-          self.cruise_press_wait = frames + CRUISE_PRESS_GAP
+          self.held_button, self.held_frames = action
+          self.cruise_press_wait = action[1] + CRUISE_PRESS_GAP
 
       throttle_op = brake_op = 0.0
       steer_op = 0.0
@@ -474,17 +581,27 @@ class SimulatorBridge(ABC):
         self.world.tick()
         self.world.read_cameras()
 
-      if self.lead_log:
-        self.print_collisions()
-      if self.lead_log and self.rk.frame % 10 == 0:
+      if self.lead_log or self.metrics is not None:
+        self.drain_collisions()
+      if self.recorder is not None and self.rk.frame % self.TICKS_PER_FRAME == 0:
+        self.record_frame()
+      if (self.lead_log or self.metrics is not None) and self.rk.frame % 10 == 0:
         truth = self.world.truth_lead()
-        # once a second, and ten times a second while something is close ahead
-        if self.rk.frame % 100 == 0 or (truth is not None and truth[0] < CLOSE_LEAD_LOG_M):
-          self.print_status(truth)
-        if truth is not None:
-          self.save_frame_near_lead(truth)
-      elif not self.lead_log and self.rk.frame % 100 == 0:
+        if self.metrics is not None:
+          self.score_sample(truth)
+          self.end_reason = self.metrics.done_reason() or self.script_end_reason()
+          if self.end_reason:
+            self.shutdown()
+        if self.lead_log:
+          # once a second, and ten times a second while something is close ahead
+          if self.rk.frame % 100 == 0 or (truth is not None and truth[0] < CLOSE_LEAD_LOG_M):
+            self.print_status(truth)
+          if truth is not None:
+            self.save_frame_near_lead(truth)
+      if not self.lead_log and self.rk.frame % 100 == 0:
         self.print_status()
 
       self.started.value = True
       self.rk.keep_time()
+
+    self.finish_run()

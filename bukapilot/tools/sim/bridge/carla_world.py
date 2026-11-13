@@ -13,7 +13,8 @@ import time
 
 import numpy as np
 
-from tools.sim.bridge.common import QueueMessage, QueueMessageType, lead_truth
+from tools.sim.bridge.common import QueueMessage, QueueMessageType, lead_truth, nearest_ahead
+from tools.sim.bridge.run_metrics import OBSTACLE_KINDS, project_half_length
 from tools.sim.lib.common import H, W, SimulatorState, World, vec3
 
 
@@ -27,7 +28,7 @@ class CarlaWorld(World):
   ROAD_FOV = 40.0
 
   def __init__(self, status_q, host, port, town, spawn_point, vehicle="vehicle.tesla.model3",
-               low_quality=False, weather="ClearNoon", motorcycle=None):
+               low_quality=False, weather="ClearNoon", motorcycle=None, obstacles=None):
     super().__init__()
     import carla  # pylint: disable=import-error
     self.carla = carla
@@ -35,6 +36,7 @@ class CarlaWorld(World):
     self.actors = []
     self.traffic_manager = None
     self.motorcycles = []
+    self.obstacles = []
     self.collisions = collections.deque(maxlen=32)  # (other actor type, impulse N*s), filled by the CARLA sensor thread
     self.tick_count = 0
     self.camera_queue = queue.Queue(maxsize=4)
@@ -88,6 +90,8 @@ class CarlaWorld(World):
     self._spawn_sensor("sensor.other.collision", self._on_collision)
     if motorcycle:
       self._spawn_motorcycles(**motorcycle)
+    if obstacles:
+      self._spawn_obstacles(obstacles)
     self.spectator_mode = os.environ.get("CARLA_SPECTATOR_MODE", "chase")
     self._update_spectator()
 
@@ -188,6 +192,79 @@ class CarlaWorld(World):
     print(f"CARLA: {len(self.motorcycles)}/{len(specs)} motorcycles: " + ", ".join(m["label"] for m in self.motorcycles),
           flush=True)
 
+  @staticmethod
+  def _yaw_change(a, b):
+    return abs((a.transform.rotation.yaw - b.transform.rotation.yaw + 180.0) % 360.0 - 180.0)
+
+  def _straight_path(self, start_wp, length_m, step=1.0):
+    """Waypoints every `step` m along the road ahead, taking the straightest branch at every junction."""
+    path = [start_wp]
+    while (len(path) - 1) * step < length_m:
+      ahead = path[-1].next(step)
+      if not ahead:
+        break
+      path.append(min(ahead, key=lambda wp: self._yaw_change(wp, path[-1])))
+    return path
+
+  def _spawn_obstacles(self, specs):
+    """Obstacles in the ego lane, `distance_m` ahead of the ego spawn point along the straight road.
+
+    specs: list of (kind, distance_m, speed_kph), kind a key of OBSTACLE_KINDS. Vehicles rest on the road with the
+    hand brake on; props are static. A motorcycle with a speed is driven by this class, not by the Traffic Manager:
+    it follows the straight road ahead at that constant speed and never turns at a junction (see _move_obstacles).
+    """
+    library = self.world.get_blueprint_library()
+    ego_wp = self.world.get_map().get_waypoint(self.spawn_transform.location)
+    path = self._straight_path(ego_wp, max(d for _, d, _ in specs) + 3000.0)
+    for n, (kind, distance, speed_kph) in enumerate(specs):
+      blueprint, yaw_offset = OBSTACLE_KINDS[kind]
+      label = f"#{n} {kind}:{distance:g}" + (f":{speed_kph:g}" if speed_kph else "")
+      if int(distance) >= len(path):
+        print(f"CARLA: obstacle {label}: the road ends before that distance, skipped", flush=True)
+        continue
+      transform = path[int(distance)].transform
+      transform.rotation.yaw += yaw_offset
+      transform.location.z += 0.3
+      bp = library.find(blueprint)
+      if bp.has_attribute("role_name"):
+        bp.set_attribute("role_name", f"obstacle_{n}")
+      actor = self.world.try_spawn_actor(bp, transform)
+      if actor is None:
+        print(f"CARLA: obstacle {label}: could not spawn, skipped", flush=True)
+        continue
+      self.actors.append(actor)
+      entry = {"actor": actor, "yaw_offset": yaw_offset, "label": label}
+      if speed_kph:
+        entry.update(speed=speed_kph / 3.6, s=float(distance), velocity=(0.0, 0.0), path=path)
+      elif actor.type_id.startswith("vehicle."):
+        actor.apply_control(self.carla.VehicleControl(hand_brake=True))
+      self.obstacles.append(entry)
+    for _ in range(15):   # let a driven vehicle settle on the road, then take it off physics
+      self.world.tick()
+    for entry in self.obstacles:
+      if "speed" in entry:
+        wp = entry["path"][int(entry["s"])]
+        entry["z_offset"] = entry["actor"].get_location().z - wp.transform.location.z
+        entry["actor"].set_simulate_physics(False)
+    print(f"CARLA: {len(self.obstacles)}/{len(specs)} obstacles: " + ", ".join(o["label"] for o in self.obstacles), flush=True)
+
+  def _move_obstacles(self):
+    """Advance the driven obstacles one simulation step along their straight path at constant speed."""
+    for entry in self.obstacles:
+      if "speed" not in entry or not entry["actor"].is_alive:
+        continue
+      path = entry["path"]
+      entry["s"] = min(entry["s"] + entry["speed"] * self.FIXED_DELTA_SECONDS, len(path) - 2.0)
+      i = int(entry["s"])
+      frac = entry["s"] - i
+      a, b = path[i].transform, path[i + 1].transform
+      location = self.carla.Location(a.location.x + (b.location.x - a.location.x) * frac,
+                                     a.location.y + (b.location.y - a.location.y) * frac,
+                                     a.location.z + (b.location.z - a.location.z) * frac + entry["z_offset"])
+      entry["actor"].set_transform(self.carla.Transform(location, a.rotation))
+      yaw = math.radians(a.rotation.yaw)
+      entry["velocity"] = (entry["speed"] * math.cos(yaw), entry["speed"] * math.sin(yaw))
+
   def _update_motorcycle_speeds(self):
     # The TM speed is "percent below the road's speed limit": recompute it from the limit where each bike is now.
     for m in self.motorcycles:
@@ -209,21 +286,51 @@ class CarlaWorld(World):
       out.append(self.collisions.popleft())
     return out
 
+  def _truth_others(self, ego):
+    """(xy, velocity xy, half-length along the ego heading) of every spawned motorcycle and obstacle."""
+    ego_yaw = ego.rotation.yaw
+    others = []
+    for entry in self.motorcycles + self.obstacles:
+      actor = entry["actor"]
+      if not actor.is_alive:
+        continue
+      location = actor.get_location()
+      if "velocity" in entry:   # a driven obstacle is moved by set_transform: CARLA does not report its speed
+        velocity_xy = entry["velocity"]
+      else:
+        velocity = actor.get_velocity()
+        velocity_xy = (velocity.x, velocity.y)
+      extent = actor.bounding_box.extent
+      half = project_half_length(extent.x, extent.y, actor.get_transform().rotation.yaw - ego_yaw)
+      others.append(((location.x, location.y), velocity_xy, half))
+    return others
+
   def truth_lead(self):
-    """Ground truth gap/speed of the nearest motorcycle ahead in the ego lane. Logged, never sent to openpilot."""
-    if not self.motorcycles:
+    """Ground truth of the nearest spawned object ahead in the ego lane: (bumper gap m, speed along ego heading m/s).
+    Logged, never sent to openpilot."""
+    if not self.motorcycles and not self.obstacles:
       return None
     ego = self.vehicle.get_transform()
     forward = ego.get_forward_vector()
-    others = []
-    for m in self.motorcycles:
-      bike = m["actor"]
-      if not bike.is_alive:
-        continue
-      location, velocity = bike.get_location(), bike.get_velocity()
-      others.append(((location.x, location.y), (velocity.x, velocity.y), bike.bounding_box.extent.x))
     return lead_truth((ego.location.x, ego.location.y), (forward.x, forward.y),
-                      self.vehicle.bounding_box.extent.x, others)
+                      self.vehicle.bounding_box.extent.x, self._truth_others(ego))
+
+  def truth_lateral(self, corridor_m=6.0):
+    """Lateral offset (m, left positive, as openpilot's yRel) of the nearest spawned object ahead within a wide
+    corridor: it stays defined while the ego steers out of the obstacle's lane. Logged, never sent to openpilot."""
+    if not self.motorcycles and not self.obstacles:
+      return None
+    ego = self.vehicle.get_transform()
+    forward = ego.get_forward_vector()
+    found = nearest_ahead((ego.location.x, ego.location.y), (forward.x, forward.y),
+                          self.vehicle.bounding_box.extent.x, self._truth_others(ego), corridor_m)
+    return None if found is None else found[2]
+
+  def ego_pose(self):
+    """Ego pose for the frame recorder: position, heading and pitch in the CARLA frame."""
+    t = self.vehicle.get_transform()
+    return {"x": t.location.x, "y": t.location.y, "z": t.location.z,
+            "yaw": t.rotation.yaw, "pitch": t.rotation.pitch, "roll": t.rotation.roll}
 
   def _sensor_transform(self):
     return self.carla.Transform(self.carla.Location(x=self.CAMERA_X, z=self.CAMERA_Z))
@@ -281,6 +388,7 @@ class CarlaWorld(World):
 
   def tick(self):
     try:
+      self._move_obstacles()
       self.current_frame = self.world.tick()
       self._update_spectator()
       self.tick_count += 1

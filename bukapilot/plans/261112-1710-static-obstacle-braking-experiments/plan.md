@@ -47,6 +47,7 @@ Today the planner has two states: a lead, or an empty road. A container that the
 - Radar, lidar or any sensor other than the road camera.
 - Automatic steering around the obstacle. The driver steers.
 - Lane-change logic, lateral planner changes.
+- Driving through intersections (no lane lines): a separate case, handled later. Benchmark runs are placed on roads where the obstacle is not inside or right after an intersection.
 
 ## Acceptance criteria
 

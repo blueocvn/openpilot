@@ -52,6 +52,8 @@ bash run.sh all --carla-town Town03 --carla-spawn-point <N>
 | `--motorcycle` | cờ | tắt | thêm bộ 7 xe máy mặc định |
 | `--motorcycle-spec` | `loại:khoảng_cách_m:tốc_độ_kmh,...`; loại = `same` / `left` / `right` / `oncoming` | bộ mặc định: `same:35:20,same:75:45,left:25:60,right:50:35,oncoming:90:50,oncoming:160:30,oncoming:230:60` | xe máy tự định nghĩa (tự bật `--motorcycle`) |
 | `--motorcycle-model` | `vehicle.kawasaki.ninja`, `vehicle.yamaha.yzf`, `vehicle.harley-davidson.low_rider` | xoay vòng cả ba | ép một mẫu xe máy cho tất cả |
+| `--obstacle-spec` | `loại:khoảng_cách_m[:tốc_độ_kmh],...`; loại = `motorcycle` / `car` / `car-across` / `barrier` / `container` | không đặt | vật cản trong làn của xe mình, cách điểm xuất phát `khoảng_cách_m` theo đường. Vật đứng yên; riêng `motorcycle` có thể kèm tốc độ để chạy cùng chiều. Ví dụ `container:150`. Chấm điểm tự động nhiều lần chạy: xem [`bench.md`](bench.md) |
+| `--cruise-kph` | km/h | không đặt (engage lúc đứng yên là 40) | sau khi engage, tự bấm nút để đưa tốc độ cài đặt về giá trị này (tăng hoặc giảm) |
 | `--no-auto-engage` | cờ | tự engage | không tự bấm SET; engage bằng phím `2` (hoặc `1`) |
 | `--duration` | số giây, vd `60` | không đặt (chạy đến khi bấm `q`) | chạy không cần bàn phím rồi tự thoát |
 | `--joystick` | cờ | tắt (điều khiển bằng bàn phím) | dùng vô-lăng/tay cầm `/dev/input/js0` |
