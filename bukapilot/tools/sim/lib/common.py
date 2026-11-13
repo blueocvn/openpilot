@@ -82,6 +82,14 @@ class World(ABC):
       self._reset_event.clear()
     return was_reset
 
+  def truth_lead(self):
+    """(bumper gap m, lead speed m/s) of the nearest object ahead, for logging only; None when unknown."""
+    return None
+
+  def consume_collisions(self):
+    """[(other actor type, impulse)] of the ego car since the last call, for logging only."""
+    return []
+
   @abstractmethod
   def apply_controls(self, steer_angle, throttle_out, brake_out):
     pass

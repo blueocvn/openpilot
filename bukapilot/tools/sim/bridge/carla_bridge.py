@@ -14,9 +14,10 @@ class CarlaBridge(SimulatorBridge):
 
   def __init__(self, host="127.0.0.1", port=2000, town="Town04_Opt", spawn_point=16,
                vehicle="vehicle.tesla.model3", low_quality=False, weather="ClearNoon",
-               auto_engage=True, test_run=False, motorcycle=None):
-    super().__init__(auto_engage=auto_engage, test_run=test_run)
+               auto_engage=True, test_run=False, motorcycle=None, cruise_kph=None, obstacles=None):
+    super().__init__(auto_engage=auto_engage, test_run=test_run, cruise_kph=cruise_kph)
     self.motorcycle = motorcycle  # None, or {"specs": [(kind, gap_m, speed_kph), ...], "models": [blueprint] | None}
+    self.obstacles = obstacles  # None, or [(kind, distance_m, speed_kph), ...] in the ego lane
     self.host = host
     self.port = port
     self.town = town
@@ -27,4 +28,5 @@ class CarlaBridge(SimulatorBridge):
 
   def spawn_world(self, q):
     return CarlaWorld(q, self.host, self.port, self.town, self.spawn_point, vehicle=self.vehicle,
-                      low_quality=self.low_quality, weather=self.weather, motorcycle=self.motorcycle)
+                      low_quality=self.low_quality, weather=self.weather, motorcycle=self.motorcycle,
+                      obstacles=self.obstacles)

@@ -10,7 +10,7 @@ from common.params import Params
 from common.realtime import Ratekeeper, Priority, config_realtime_process
 from selfdrive.config import RADAR_TO_CAMERA
 from selfdrive.controls.lib.cluster.fastcluster_py import cluster_points_centroid
-from selfdrive.controls.lib.radar_helpers import Cluster, Track
+from selfdrive.controls.lib.radar_helpers import Cluster, Track, VisionLeadFilter
 from selfdrive.swaglog import cloudlog
 from selfdrive.hardware import TICI
 
@@ -66,7 +66,7 @@ def match_vision_to_cluster(v_ego, lead, clusters):
     return None
 
 
-def get_lead(v_ego, ready, clusters, lead_msg, low_speed_override=True):
+def get_lead(v_ego, ready, clusters, lead_msg, low_speed_override=True, vision_filter=None, slot=0):
   # Determine leads, this is where the essential logic happens
   if len(clusters) > 0 and ready and lead_msg.prob > .5:
     cluster = match_vision_to_cluster(v_ego, lead_msg, clusters)
@@ -76,6 +76,8 @@ def get_lead(v_ego, ready, clusters, lead_msg, low_speed_override=True):
   lead_dict = {'status': False}
   if cluster is not None:
     lead_dict = cluster.get_RadarState(lead_msg.prob)
+  elif (cluster is None) and ready and vision_filter is not None:
+    lead_dict = vision_filter.update(slot, lead_msg, v_ego)
   elif (cluster is None) and ready and (lead_msg.prob > .5):
     lead_dict = Cluster().get_RadarState_from_vision(lead_msg, v_ego)
 
@@ -103,6 +105,15 @@ class RadarD():
     self.v_ego_hist = deque([0], maxlen=delay+1)
 
     self.ready = False
+
+    # vision-only lead refinements, each behind its own flag (all off: the model's lead is used as it is)
+    params = Params()
+    flags = [params.get_bool(k) for k in ("VisionLeadDistanceMargin", "VisionLeadSpeedFromDistance", "VisionLeadHold")]
+    self.vision_filter = VisionLeadFilter(radar_ts, *flags) if any(flags) else None
+    msg = (f"radard vision lead flags: VisionLeadDistanceMargin={flags[0]} VisionLeadSpeedFromDistance={flags[1]} "
+           f"VisionLeadHold={flags[2]}, VisionLeadFilter {'active' if self.vision_filter is not None else 'off'}")
+    cloudlog.info(msg)
+    print(msg, flush=True)
 
   def update(self, sm, rr, enable_lead):
     self.current_time = 1e-9*max(sm.logMonoTime.values())
@@ -174,8 +185,10 @@ class RadarD():
     if enable_lead:
       leads_v3 = sm['modelV2'].leadsV3
       if len(leads_v3) > 1:
-        radarState.leadOne = get_lead(self.v_ego, self.ready, clusters, leads_v3[0], low_speed_override=True)
-        radarState.leadTwo = get_lead(self.v_ego, self.ready, clusters, leads_v3[1], low_speed_override=False)
+        radarState.leadOne = get_lead(self.v_ego, self.ready, clusters, leads_v3[0], low_speed_override=True,
+                                      vision_filter=self.vision_filter, slot=0)
+        radarState.leadTwo = get_lead(self.v_ego, self.ready, clusters, leads_v3[1], low_speed_override=False,
+                                      vision_filter=self.vision_filter, slot=1)
     return dat
 
 

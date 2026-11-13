@@ -32,6 +32,8 @@ fi
 
 export OP_UI="${OP_UI:-0}"
 export OP_UI_PORT="${OP_UI_PORT:-8765}"
+export LEAD_LOG="${LEAD_LOG:-0}"   # 1 = status line with openpilot's lead vs the simulator's ground truth
+export ALC_MIN_SPEED_KPH="${ALC_MIN_SPEED_KPH:-30}"   # lowest speed for a lane change in the simulator (real cars: 30 mph)
 export CARLA_HOST="${CARLA_HOST:-127.0.0.1}"   # --net=host, CARLA runs on this machine
 OP_ROOT="$(cd "$ROOT/.." && pwd)"
 HOST_UI_PID=""
@@ -95,7 +97,7 @@ docker run --net=host \
   -e HOME=/home/sim \
   -e DISPLAY="$DISPLAY" \
   -e PYTHONPATH="$ROOT" \
-  -e CARLA_KEYS -e CARLA_WINDOW_TITLE -e OP_UI -e OP_UI_PORT -e CARLA_HOST -e CARLA_PORT -e CARLA_CAMERA_X -e CARLA_CAMERA_Z -e CARLA_SPECTATOR_MODE -e BLOCK \
+  -e ALC_MIN_SPEED_KPH -e LEAD_LOG -e LEAD_FRAME_DIR -e LEAD_RESULT_FILE -e LEAD_SCENARIO -e LEAD_OVERTAKE -e LEAD_RUN_DISTANCE_M -e LEAD_RECORD_DIR -e LEAD_RECORD_EVERY -e LEAD_RECORD_IMAGES -e SIM_PARAMS -e CARLA_CLEAN_START -e OPENPILOT_MANAGER_LOG -e CARLA_KEYS -e CARLA_WINDOW_TITLE -e OP_UI -e OP_UI_PORT -e CARLA_HOST -e CARLA_PORT -e CARLA_CAMERA_X -e CARLA_CAMERA_Z -e CARLA_SPECTATOR_MODE -e BLOCK \
   -v "$ROOT:$ROOT" \
   -w "$SIM" \
   "$IMAGE" \

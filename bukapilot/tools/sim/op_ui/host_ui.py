@@ -251,6 +251,11 @@ def start_ui():
   env = os.environ.copy()
   env["PYTHONPATH"] = OP_ROOT
   env.setdefault("SCALE", "1.5")  # same window size as openpilot's .carla/run-linux.sh
+  # The UI has no text input. With an input method (ibus Telex/VNI for Vietnamese) GLFW attaches to it and every
+  # key typed in the window, e.g. a held W, shows up as a preedit text bar over the camera view.
+  env["XMODIFIERS"] = "@im=none"
+  env.pop("QT_IM_MODULE", None)
+  env.pop("GTK_IM_MODULE", None)
   log_dir = os.path.join(STATE_DIR, "logs")
   os.makedirs(log_dir, exist_ok=True)
   log = open(os.path.join(log_dir, "ui.log"), "w")
