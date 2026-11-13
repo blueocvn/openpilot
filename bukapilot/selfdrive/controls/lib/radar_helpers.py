@@ -1,4 +1,4 @@
-from common.numpy_fast import mean
+from common.numpy_fast import clip, mean
 from common.kalman.simple_kalman import KF1D
 from selfdrive.config import RADAR_TO_CAMERA
 
@@ -12,6 +12,103 @@ SPEED, ACCEL = 0, 1   # Kalman filter states enum
 
 # stationary qualification parameters
 v_ego_stationary = 4.   # no stationary object flag below this speed
+
+
+# Vision-only lead refinements (cars without radar points). Each part has its own flag, off by default.
+LEAD_PROB_MIN = 0.5            # the model's lead is used above this probability
+LEAD_MARGIN_K_STD = 1.0        # distance margin = K * xStd, between the two limits (m)
+LEAD_MARGIN_MIN = 3.0
+LEAD_MARGIN_MAX = 10.0
+LEAD_SPEED_XSTD_MAX = 5.0      # the speed from distance trend is only trusted while the distance is this certain (m)
+LEAD_SPEED_FILTER_S = 0.5      # low-pass window of the distance trend
+LEAD_SPEED_WARMUP = 3          # frames of trend needed before it may lower the model's speed
+LEAD_HOLD_S = 1.0              # keep a lead this long after its probability drops below LEAD_PROB_MIN
+LEAD_HOLD_RELEASE_PROB = 0.1   # ... but let go at once below this
+
+
+class _LeadSlot():
+  def __init__(self):
+    self.reset()
+
+  def reset(self):
+    self.last = None        # (dRel, yRel, vLead, vRel at the last good frame)
+    self.age = 0            # frames since the last good frame
+    self.prev_d = None      # raw distance of the previous good frame, for the trend
+    self.rate = 0.0         # filtered d(dRel)/dt
+    self.rate_n = 0
+
+
+class VisionLeadFilter():
+  """Makes the camera model's lead safer to follow. One instance per RadarD; `slot` is the lead index (0 or 1).
+
+  margin: dRel is shortened by K * xStd (limits above), because the model over-estimates close distances.
+  speed:  vLead is capped by the speed the distance trend implies (v_ego + d(dRel)/dt), so a stationary object the
+          model reports as moving is still seen as stationary.
+  hold:   the lead is kept for LEAD_HOLD_S after its probability dips below LEAD_PROB_MIN, extrapolated with its last
+          relative speed; it is released at once when the probability falls below LEAD_HOLD_RELEASE_PROB.
+  """
+
+  def __init__(self, dt, margin=False, speed=False, hold=False):
+    self.dt = dt
+    self.margin = margin
+    self.speed = speed
+    self.hold = hold
+    self.slots = {}
+
+  def update(self, slot, lead_msg, v_ego):
+    """RadarState lead dict for this slot, {'status': False} when there is none."""
+    st = self.slots.setdefault(slot, _LeadSlot())
+    prob = float(lead_msg.prob)
+    if prob > LEAD_PROB_MIN:
+      return self._seen(st, lead_msg, v_ego, prob)
+    if self.hold and st.last is not None and prob >= LEAD_HOLD_RELEASE_PROB and (st.age + 1) * self.dt <= LEAD_HOLD_S:
+      st.age += 1
+      d, y, v_lead, _ = st.last
+      v_rel = v_lead - v_ego
+      return self._lead_dict(max(d + v_rel * st.age * self.dt, 0.0), y, v_lead, v_ego, prob)
+    st.reset()
+    return {'status': False}
+
+  def _seen(self, st, lead_msg, v_ego, prob):
+    d = float(lead_msg.x[0]) - RADAR_TO_CAMERA
+    y = -float(lead_msg.y[0])
+    v_lead = float(lead_msg.v[0])
+    x_std = float(lead_msg.xStd[0])
+
+    if self.speed:
+      if st.prev_d is not None and x_std < LEAD_SPEED_XSTD_MAX:
+        raw = (d - st.prev_d) / self.dt
+        alpha = self.dt / (LEAD_SPEED_FILTER_S + self.dt)
+        st.rate = raw if st.rate_n == 0 else st.rate + alpha * (raw - st.rate)   # start from the first sample, not 0
+        st.rate_n += 1
+        if st.rate_n >= LEAD_SPEED_WARMUP:
+          v_lead = min(v_lead, max(v_ego + st.rate, 0.0))
+      else:
+        st.rate, st.rate_n = 0.0, 0
+      st.prev_d = d
+
+    if self.margin:
+      d = max(d - clip(LEAD_MARGIN_K_STD * x_std, LEAD_MARGIN_MIN, LEAD_MARGIN_MAX), 0.0)
+
+    st.last = (d, y, v_lead, v_lead - v_ego)
+    st.age = 0
+    return self._lead_dict(d, y, v_lead, v_ego, prob)
+
+  @staticmethod
+  def _lead_dict(d, y, v_lead, v_ego, prob):
+    return {
+      "dRel": float(d),
+      "yRel": float(y),
+      "vRel": float(v_lead - v_ego),
+      "vLead": float(v_lead),
+      "vLeadK": float(v_lead),
+      "aLeadK": 0.0,
+      "aLeadTau": 0.3,
+      "fcw": False,
+      "modelProb": prob,
+      "radar": False,
+      "status": True
+    }
 
 
 class Track():

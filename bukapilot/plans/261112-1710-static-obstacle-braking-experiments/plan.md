@@ -51,7 +51,7 @@ Today the planner has two states: a lead, or an empty road. A container that the
 
 ## Acceptance criteria
 
-Each scenario runs 10 times, engaged, at set speeds 30 and 60 km/h, in Town04_Opt (spawn 170) and Town05_Opt (spawn 1).
+Each scenario runs 3 times (runs agree within about 1 m), engaged, at set speeds 30 and 60 km/h, in Town04_Opt only (spawn 170; spawn 171 for following). Town05 was dropped: its intersections are a separate case.
 
 | Scenario | Pass condition |
 |---|---|

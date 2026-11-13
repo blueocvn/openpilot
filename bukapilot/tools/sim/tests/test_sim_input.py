@@ -7,7 +7,7 @@ import unittest
 
 from selfdrive.controls.lib.desire_helper import lane_change_speed_min
 from tools.sim.bridge.common import (LONG_PRESS_FRAMES, SHORT_PRESS_FRAMES, SimulatorBridge, blinker_for_command, lead_truth, nearest_ahead, collision_banner, frame_label, frame_name, save_lead_frame, next_cruise_press, next_cruise_action, plan_manual_routing, status_line)
-from tools.sim.bridge.bench_summary import judge, split_label, table_rows
+from tools.sim.bridge.bench_summary import judge, rule_for, split_label, table_rows
 from tools.sim.bridge.run_metrics import (OvertakeScript, RunMetrics, parse_obstacle_spec, project_half_length)
 from tools.sim.lib.keyboard_ctrl import KEY_COMMANDS
 from tools.sim.lib.x11_keys import DEFAULT_WINDOW_TITLE, REPEAT_PERIOD, X11Keys, key_events, pressed_keycodes
@@ -283,51 +283,85 @@ class TestOvertakeScript(unittest.TestCase):
 class TestBenchSummary(unittest.TestCase):
   BASE = dict(engaged=True, collision=False, min_gap_m=6.0, peak_decel_mps2=-2.0, false_brake_events=0)
 
-  def run_of(self, scenario, **fields):
-    return {**self.BASE, "scenario": scenario, **fields}
-
-  def test_a_run_on_an_overloaded_machine_is_discarded(self):
-    ok, reason = judge(self.run_of("barrier/Town05_Opt/60", realtime_factor=0.8))
-    self.assertFalse(ok)
-    self.assertIn("overloaded", reason)
-    self.assertTrue(judge(self.run_of("barrier/Town05_Opt/60", realtime_factor=1.02))[0])
+  def run_of(self, label, **fields):
+    return {**self.BASE, "scenario": label, **fields}
 
   def test_label_split(self):
-    self.assertEqual(split_label("parked-car/Town05_Opt/30"), ("parked-car", "Town05_Opt", 30.0))
+    self.assertEqual(split_label("motorcycle/20/30"), ("motorcycle", 20.0, 30.0, False))
+    self.assertEqual(split_label("barrier/0/30/overtake"), ("barrier", 0.0, 30.0, True))
+    self.assertEqual(split_label("none/0/60"), ("none", 0.0, 60.0, False))
+
+  def test_the_cell_decides_the_rule(self):
+    self.assertEqual(rule_for("none/0/60"), "clear")
+    self.assertEqual(rule_for("container/0/30"), "stop")
+    self.assertEqual(rule_for("motorcycle/0/60"), "stop")
+    self.assertEqual(rule_for("motorcycle/7.2/60"), "stop")      # 2 m/s: stop behind it
+    self.assertEqual(rule_for("motorcycle/20/30"), "follow")     # 5.6 m/s: follow it
+    self.assertEqual(rule_for("motorcycle/40/60"), "follow")
+    self.assertEqual(rule_for("barrier/0/30/overtake"), "overtake")
+    self.assertEqual(rule_for("tree/0/30"), "unknown")
+
+  def test_a_run_on_an_overloaded_machine_is_discarded(self):
+    ok, reason = judge(self.run_of("barrier/0/60", realtime_factor=0.8))
+    self.assertFalse(ok)
+    self.assertIn("overloaded", reason)
+    self.assertTrue(judge(self.run_of("barrier/0/60", realtime_factor=1.02))[0])
 
   def test_obstacle_rows_need_no_collision_and_a_4_m_gap(self):
-    self.assertTrue(judge(self.run_of("barrier/Town05_Opt/60"))[0])
-    self.assertFalse(judge(self.run_of("barrier/Town05_Opt/60", min_gap_m=3.9))[0])
-    self.assertFalse(judge(self.run_of("container/Town05_Opt/60", collision=True, min_gap_m=-0.2, impact_speed_mps=9.0))[0])
-    self.assertFalse(judge(self.run_of("parked-car/Town05_Opt/60", peak_decel_mps2=-4.0))[0])
-    self.assertFalse(judge(self.run_of("parked-car/Town05_Opt/60", engaged=False))[0])
-    self.assertFalse(judge(self.run_of("parked-car/Town05_Opt/60", min_gap_m=None))[0])
+    self.assertTrue(judge(self.run_of("barrier/0/60"))[0])
+    self.assertFalse(judge(self.run_of("barrier/0/60", min_gap_m=3.9))[0])
+    self.assertFalse(judge(self.run_of("container/0/60", collision=True, min_gap_m=-0.2, impact_speed_mps=9.0))[0])
+    self.assertFalse(judge(self.run_of("car/0/60", peak_decel_mps2=-4.0))[0])
+    self.assertFalse(judge(self.run_of("car/0/60", engaged=False))[0])
+    self.assertFalse(judge(self.run_of("car/0/60", min_gap_m=None))[0])
+
+  def test_leaving_the_road_is_a_failure_even_without_a_collision(self):
+    ok, reason = judge(self.run_of("barrier/0/30", other_contacts=3))
+    self.assertFalse(ok)
+    self.assertIn("left the road", reason)
 
   def test_following_gap_within_20_percent_of_intended(self):
-    self.assertTrue(judge(self.run_of("follow-motorcycle/Town05_Opt/60", steady_gap_m=22.0, intended_gap_m=20.0))[0])
-    self.assertFalse(judge(self.run_of("follow-motorcycle/Town05_Opt/60", steady_gap_m=25.0, intended_gap_m=20.0))[0])
-    self.assertFalse(judge(self.run_of("follow-motorcycle/Town05_Opt/60"))[0])
+    self.assertTrue(judge(self.run_of("motorcycle/40/60", steady_gap_m=22.0, intended_gap_m=20.0))[0])
+    self.assertFalse(judge(self.run_of("motorcycle/40/60", steady_gap_m=25.0, intended_gap_m=20.0))[0])
+    self.assertFalse(judge(self.run_of("motorcycle/40/60"))[0])
+    self.assertTrue(judge(self.run_of("motorcycle/20/30", steady_gap_m=15.0, intended_gap_m=14.0))[0])
 
   def test_clear_road_needs_no_false_braking_and_90_percent_speed(self):
-    ok = self.run_of("clear-road/Town05_Opt/30", avg_speed_cruise_mps=7.8)   # 90% of 30 km/h = 7.5 m/s
+    ok = self.run_of("none/0/30", avg_speed_cruise_mps=7.8)   # 90% of 30 km/h = 7.5 m/s
     self.assertTrue(judge(ok)[0])
     self.assertFalse(judge({**ok, "avg_speed_cruise_mps": 7.0})[0])
     self.assertFalse(judge({**ok, "false_brake_events": 1})[0])
 
   def test_overtake_needs_no_contact_and_no_braking_against_the_driver(self):
-    self.assertTrue(judge(self.run_of("overtake/Town05_Opt/30", overtake_max_brake=0.0))[0])
-    self.assertFalse(judge(self.run_of("overtake/Town05_Opt/30", overtake_max_brake=0.4))[0])
-    self.assertFalse(judge(self.run_of("overtake/Town05_Opt/30", collision=True))[0])
+    self.assertTrue(judge(self.run_of("barrier/0/30/overtake", overtake_max_brake=0.0))[0])
+    self.assertFalse(judge(self.run_of("barrier/0/30/overtake", overtake_max_brake=0.4))[0])
+    self.assertFalse(judge(self.run_of("barrier/0/30/overtake", collision=True))[0])
 
   def test_table_groups_repeats_and_reports_the_spread(self):
     runs = []
     for gap in (5.0, 6.0, 8.0):
-      run = self.run_of("barrier/Town05_Opt/30", min_gap_m=gap)
+      run = self.run_of("barrier/0/30", min_gap_m=gap)
       run["passed"], run["reason"] = judge(run)
       runs.append(run)
     (row,) = table_rows(runs)
+    self.assertEqual((row["obstacle"], row["obstacle_kph"], row["ego_kph"]), ("barrier", 0.0, 30.0))
     self.assertEqual((row["runs"], row["passed"], row["collisions"]), (3, 3, 0))
     self.assertEqual((row["min_gap_worst_m"], row["min_gap_median_m"], row["min_gap_spread_m"]), (5.0, 6.0, 3.0))
+
+
+class TestSimParams(unittest.TestCase):
+  def test_parses_boolean_flags(self):
+    from tools.sim.lib.params import parse_sim_params
+    self.assertEqual(parse_sim_params("VisionLeadHold=1, VisionLeadDistanceMargin=0"),
+                     [("VisionLeadHold", True), ("VisionLeadDistanceMargin", False)])
+    self.assertEqual(parse_sim_params(""), [])
+    self.assertEqual(parse_sim_params(None), [])
+
+  def test_rejects_anything_but_zero_or_one(self):
+    from tools.sim.lib.params import parse_sim_params
+    for bad in ("Key", "Key=2", "Key=true"):
+      with self.assertRaises(ValueError, msg=bad):
+        parse_sim_params(bad)
 
 
 class TestStatusLine(unittest.TestCase):

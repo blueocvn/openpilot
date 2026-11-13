@@ -1,6 +1,6 @@
 # Progress: static obstacle braking experiments
 
-Last update: 2026-11-13 10:45. Work paused before the full baseline run (phase 1, step 5); the user will run it.
+Last update: 2026-11-13 12:45. Work paused before the full baseline run (phase 1, step 5); the user will run it.
 
 ## State
 
@@ -29,9 +29,13 @@ Nothing is committed. `selfdrive/` is untouched. The benchmark stack (`carla_ben
 2. The motorcycle drives straight and the follow run is longer.
 3. Obstacles are placed farther away. Measured limit: Town05 has no straight road longer than 360 m, so Town05 uses 250 m; Town04 spawn 170 is straight for 450 m and uses 400 m.
 4. Intersections are out of scope here: the user will handle them as a separate case later. Town05 60 km/h is skipped for that reason.
-5. The 4 m minimum gap was explained to the user, no change requested; it stays in the plan.
+5. One map only, Town04_Opt (user, 2026-11-13); Town05 dropped from the benchmark. The matrix is 14 cells, 3 repeats.
+6. The 4 m minimum gap was explained to the user, no change requested; it stays in the plan.
 
 ## Findings so far
+
+The Town05 findings below are historical: Town05 is no longer benchmarked.
+
 
 1. Set speed (phase 1, step 6). `--cruise-kph` only pressed RES+, so a 30 km/h run stayed at the 40 km/h engage default. Fixed in the bridge; later runs hold 30. The earlier slide to 8 km/h was not reproduced and is still unexplained.
 2. Road geometry, measured on the map. Longest straight road from any spawn point: Town05 360 m (spawns 88, 126, 127; an intersection every 90 m, 25 m long), Town04 715 m (spawns 171 to 173, which climb 11 m). Longest stretch without any junction is 155 m in either town. Spawn points used: Town04 170 (straight 450 m, junction at 245 to 300 m), Town04 171 for following, Town05 126.
@@ -41,6 +45,25 @@ Nothing is committed. `selfdrive/` is untouched. The benchmark stack (`carla_ben
 6. Scoring uses the simulated clock (`realtime_factor` is about 1.0 to 1.1), and braking figures stop at the first contact.
 
 7. Speed of the benchmark (2026-11-13). The simulation cannot run faster than real time without changing what openpilot perceives: `modeld` and `controlsd` use the wall clock. The first `full` run was slow because four of five Town05 runs never met the obstacle (it stood past the intersection at 170 m, where the car leaves the straight) and ran 146 s each, with 10 repeats per cell. Changes: Town05 obstacle at 150 m, 3 repeats per cell (runs agree within about 1 m), per-run time limit from distance and speed, clear road 1000 m, and `BENCH_JOBS=n` stacks side by side (own CARLA port 2100 + 10 n and own containers). Measured with the user's sim also running: 2 stacks keep `realtime_factor` at 1.0 to 1.2, 3 stacks drop to 0.8, so use 2. The summary fails any run below 0.95.
+
+## Phase 3 so far (2026-11-13)
+
+Code (needs the user's approval before any default changes; all three flags are off by default): `VisionLeadFilter` in `selfdrive/controls/lib/radar_helpers.py`, hooked into `get_lead` in `selfdrive/controls/radard.py`, three Params keys in `selfdrive/common/params.cc`, 17 unit tests in `selfdrive/controls/tests/test_vision_lead.py`. Parts: A distance margin, B speed from distance trend, C lead hold.
+
+Offline replay of the baseline traces rejected B (10% of following frames had a speed more than 2 m/s too low, so phantom braking; the model's speed error is already small) and kept A and C.
+
+Benchmark contamination found: the CARLA server of the benchmark outlives the runs and a run can end without destroying its actors, so the ego car of earlier runs stood on the road (collisions with `vehicle.tesla.model3` on an empty road, always at about 385 m). Every Town04 result before this fix is unreliable, including the earlier baseline and its apparent noise. Fix: `CARLA_CLEAN_START=1` (set by `bench.sh`) removes leftover vehicles, props and sensors at the start of each run.
+
+Follow test, ego 60 km/h, motorcycle 40 km/h, 3 runs per setting, 1 stack, after the contamination fix (`.carla/bench/flags-follow/`). Measured on the frames where both cars drive within 1 m/s of each other (the real steady follow), true gap against the gap the planner aims for (`desired_follow_distance`):
+
+| Setting | Closest approach per run (m) | True gap / aimed gap, per run | Mean | Runs within 20% of the aimed gap |
+|---|---|---|---|---|
+| base | 2.65, 4.54, 4.82 | 0.56, 0.76, 0.62 | 0.65 | 0 of 3 |
+| A margin | 6.69, 6.20, 6.30 | 0.75, 0.63, 0.88 | 0.75 | 1 of 3 |
+| C hold | 5.13, 5.49, 5.09 | 0.84, 0.60, 0.65 | 0.69 | 1 of 3 |
+| A + C | 8.29, 6.15, 6.60 | 0.93, 0.85, 0.95 | 0.91 | 3 of 3 |
+
+The gap oscillates by about 5 m (standard deviation) in every setting. No collisions, no false braking, peak deceleration unchanged (-1.1 to -2.1 m/s²). Flag A confirmed active from the traces (radard's dRel is 3.0 m below the model's, the minimum margin); C holds the lead for 193 frames (A+C: 336) against 15 in base. Only A+C separates clearly from base; A and C alone overlap base. Limits: 3 runs per setting; the stop-in-front-of-obstacle cells were not run for A and C; the bench summary's own "steady gap" metric returned nothing in 9 of 12 runs (its 10 s window falls in the bend after 715 m, where the motorcycle leaves the lane by ground truth), so its pass counts (base 2, A 1, C 2, A+C 0 of 3) are not meaningful and the metric must be changed to the matched-speed frames used above.
 
 ## Baseline numbers so far (stock code, flags do not exist yet)
 

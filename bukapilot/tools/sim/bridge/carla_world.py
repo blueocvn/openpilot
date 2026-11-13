@@ -68,6 +68,9 @@ class CarlaWorld(World):
       raise ValueError(f"spawn point {spawn_point} out of range, {town} has 0..{len(spawn_points) - 1}")
     self.spawn_transform = spawn_points[spawn_point]
 
+    if os.environ.get("CARLA_CLEAN_START") == "1":
+      self._remove_leftovers()
+
     vehicle_bp = self.world.get_blueprint_library().find(vehicle)
     if vehicle_bp.has_attribute("role_name"):
       vehicle_bp.set_attribute("role_name", "hero")
@@ -97,6 +100,20 @@ class CarlaWorld(World):
 
     self.status_q.put(QueueMessage(QueueMessageType.START_STATUS, "started"))
     print(f"CARLA connected: {host}:{port}, map={town}, spawn={spawn_point}, vehicle={vehicle}", flush=True)
+
+  def _remove_leftovers(self):
+    """Benchmark runs share one CARLA server and a run can end without destroying its actors. The ego car of an
+    earlier run then stands on the road as an obstacle nobody asked for (seen: collisions with a vehicle.tesla.model3
+    on an empty road). Only enabled by CARLA_CLEAN_START=1, so a simulation driven by hand is never touched."""
+    stale = [a for a in self.world.get_actors() if a.type_id.startswith(("vehicle.", "static.prop.", "sensor."))]
+    for actor in stale:
+      if hasattr(actor, "stop"):
+        actor.stop()
+    for actor in stale:
+      actor.destroy()
+    if stale:
+      self.world.tick()
+      print(f"CARLA: removed {len(stale)} leftover actors of earlier runs", flush=True)
 
   def _load_world(self, town):
     world = self.client.get_world()

@@ -191,3 +191,96 @@ Lưu ý khi đọc:
 - Khi xe của mình va chạm, log in một khối chữ HOA có viền `#` (nội dung: va chạm với vật gì, tốc độ xe, lực va chạm và openpilot lúc đó thấy lead nào hoặc không thấy lead nào). Sự kiện này lấy từ cảm biến va chạm của CARLA, không phụ thuộc vào `gap`, và chỉ in tối đa một khối mỗi giây dù xe vẫn đang tì vào vật cản.
 - Khi khoảng cách thật dưới 15 m, bridge lưu thêm khung hình camera mà model thực sự nhận (JPEG, đóng dấu `SIM gap=... | OP dRel=...` ở đầu ảnh) vào `.carla/lead-frames/` (đổi bằng biến `LEAD_FRAME_DIR`), tối đa 2 ảnh mỗi giây và 200 ảnh mỗi lần chạy. Tên file có số thứ tự, khoảng cách thật và khoảng cách openpilot thấy, ví dụ `0003_gap008.1_op23.2.jpg`.
 - Cách nhận biết vấn đề: `NO LEAD` trong khi `gap` còn nhỏ nghĩa là model bỏ lỡ xe máy; `plan=cruise` và `accel` dương khi xe máy ở gần nghĩa là planner không coi nó là vật cản.
+
+## Kịch bản: nhiều xe máy làm vật cản giữa đường
+
+Kiểm tra ba việc của xe: dừng trước vật cản, giữ khoảng cách với xe phía trước, và đánh lái tránh vật cản.
+Tất cả chạy trên đường thẳng `Town04_Opt` điểm 170 và bật `--lead-log` để so cái openpilot thấy với số thật của CARLA
+(cách đọc log: xem mục "Log kiểm tra khoảng cách" ở trên).
+
+`--obstacle-spec` đặt xe máy **đúng giữa làn của xe mình**, `khoảng_cách_m` tính từ điểm xuất phát theo đường. Xe máy
+không có tốc độ thì đứng yên; có tốc độ thì chạy thẳng với tốc độ không đổi. Mỗi xe máy rộng chừng 0,8 m và dài khoảng
+2 m, nên đặt cách nhau 4 đến 6 m là một hàng xe nối đuôi.
+
+Hai giới hạn cần biết:
+
+- Xe máy chạy (`motorcycle:khoảng_cách:km/h`) không phanh và không né, nên đi xuyên qua xe máy đứng yên nếu chạm tới.
+  Không đặt xe máy đứng yên ở nơi xe máy chạy sẽ tới trong thời gian chạy; hai kịch bản bám theo và dừng bên dưới
+  vì vậy được tách riêng.
+- Vật cản chỉ nằm ở giữa làn xe mình. Làn bên cạnh và làn ngược chiều dùng `--motorcycle-spec`
+  (`left` / `right` / `oncoming`).
+
+### 1. Dừng trước một hàng xe máy đứng yên
+
+Ba xe máy nối đuôi ở 200 m, 205 m và 210 m. Xe chạy cruise 60 km/h, phải phát hiện, giảm tốc và dừng trước xe máy đầu
+tiên, không chạm.
+
+```bash
+bash run.sh all --carla-town Town04_Opt --carla-spawn-point 170 \
+  --obstacle-spec "motorcycle:200,motorcycle:205,motorcycle:210" \
+  --cruise-kph 60 --lead-log
+```
+
+Đạt khi: log không có khối `#` va chạm, `speed` về 0 và `[SIM] gap` cuối cùng còn dương (vài mét). Nếu thấy
+`NO LEAD` trong khi `gap` đã dưới 40 m, model bỏ lỡ xe máy.
+
+### 2. Giữ khoảng cách sau hai xe máy chạy chậm
+
+Hai xe máy cùng làn, xe sau chậm (15 km/h) ở 60 m, xe trước nhanh hơn (30 km/h) ở 120 m. Xe trước chạy xa dần nên
+hai xe máy không chạm nhau. Xe mình chạy cruise 60 km/h, đuổi kịp xe máy 15 km/h rồi phải giảm xuống 15 km/h và giữ
+khoảng cách ổn định.
+
+```bash
+bash run.sh all --carla-town Town04_Opt --carla-spawn-point 170 \
+  --obstacle-spec "motorcycle:60:15,motorcycle:120:30" \
+  --cruise-kph 60 --lead-log --duration 90
+```
+
+Đạt khi: `plan=lead0` khi đã đuổi kịp, `[SIM] speed` về gần 15 km/h, `gap` ổn định (không dao động mạnh, không dưới
+vài mét), `closing` về gần 0, không có va chạm. Xe không được ép xe máy 15 km/h bằng phanh gấp: xem `accel` ở dòng
+`[OP cmd]`.
+
+### 3. Đánh lái tránh hàng xe máy
+
+Hàng xe máy đứng yên chắn làn ở 250 m. Xe chạy cruise 50 km/h (trên mức tối thiểu để đổi làn) và người lái
+đổi làn bằng xi-nhan trước khi tới sát (cách làm: mục "Đổi làn bằng xi-nhan").
+
+```bash
+bash run.sh all --carla-town Town04_Opt --carla-spawn-point 170 \
+  --obstacle-spec "motorcycle:250,motorcycle:255,motorcycle:260" \
+  --cruise-kph 50 --lead-log
+```
+
+1. Chờ xe đạt tốc độ cruise, khi `[SIM] gap` còn khoảng 100 m thì bấm `z` (hoặc `c` nếu làn phải trống).
+2. Bấm `a` (hoặc `d`) cùng hướng xi-nhan để openpilot đổi làn.
+3. Xe qua hàng xe máy, bấm `x` tắt xi-nhan.
+
+Đạt khi: xe sang làn bên mà không chạm xe máy nào (không có khối `#`). Nếu xe đã giảm xuống dưới 30 km/h trước khi
+bấm thì ALC không bắt đầu và `a` / `d` chỉ lái tay; tăng `--cruise-kph` hoặc bấm sớm hơn. Mô phỏng không báo điểm mù,
+tự nhìn làn bên trước khi đổi.
+
+### 4. Hàng xe máy chắn đường cùng xe ngược chiều
+
+Như kịch bản 1 nhưng có thêm hai xe máy ngược chiều chạy qua trong lúc xe mình đang giảm tốc, để kiểm tra xe không nhận
+nhầm xe ngược chiều thành lead.
+
+```bash
+bash run.sh all --carla-town Town04_Opt --carla-spawn-point 170 \
+  --obstacle-spec "motorcycle:200,motorcycle:205,motorcycle:210" \
+  --motorcycle-spec "oncoming:150:50,oncoming:260:40" \
+  --cruise-kph 60 --lead-log
+```
+
+Đạt khi: xe vẫn dừng trước hàng xe máy đứng yên như kịch bản 1, và `plan` không chuyển sang `lead0` vì xe ngược
+chiều (xe ngược chiều không nằm trong làn của xe mình, nên `[SIM]` không tính chúng).
+
+### Chấm điểm tự động
+
+Cho một vật cản đơn lẻ (không phải hàng nhiều xe), `bench.sh` chạy nhiều lần và tự chấm, ví dụ:
+
+```bash
+bash bench.sh run motorcycle 0 60 3     # xe máy đứng yên, xe mình 60 km/h, 3 lần: ô "dừng trước vật cản"
+bash bench.sh run motorcycle 40 60 3    # xe máy 40 km/h: ô "bám theo"
+```
+
+Điều kiện đạt của từng loại ô: xem [`bench.md`](bench.md).

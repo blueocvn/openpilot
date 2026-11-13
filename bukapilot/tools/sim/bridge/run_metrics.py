@@ -291,12 +291,13 @@ class FrameRecorder:
   The offline trials of the clear-distance source read these back. Encoding runs on a small thread pool.
   """
 
-  def __init__(self, directory, every=1, quality=90):
+  def __init__(self, directory, every=1, quality=90, images=True):
     from concurrent.futures import ThreadPoolExecutor
     self.directory = pathlib.Path(directory)
     self.directory.mkdir(parents=True, exist_ok=True)
     self.every = max(int(every), 1)
     self.quality = quality
+    self.images = images
     self.count = 0
     self.saved = 0
     self.pool = ThreadPoolExecutor(max_workers=2)
@@ -312,7 +313,8 @@ class FrameRecorder:
     self.saved += 1
     self.truth_file.write(json.dumps({"frame": name, **record}) + "\n")
     self.truth_file.flush()
-    self.pool.submit(self._save, bgra.copy(), self.directory / name)
+    if self.images:
+      self.pool.submit(self._save, bgra.copy(), self.directory / name)
 
   def _save(self, bgra, path):
     from PIL import Image

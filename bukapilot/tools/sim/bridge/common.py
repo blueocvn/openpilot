@@ -255,6 +255,7 @@ class SimulatorBridge(ABC):
     #                            stopped for good, LEAD_RUN_DISTANCE_M driven)
     #   LEAD_SCENARIO=<label>    copied into the result;  LEAD_OVERTAKE=1: a scripted driver steers out and passes
     #   LEAD_RECORD_DIR=<dir>    every LEAD_RECORD_EVERY-th camera frame (JPEG) plus truth.jsonl with ground truth
+    #                            and the model's lead output; LEAD_RECORD_IMAGES=0 writes truth.jsonl only
     self.result_file = os.environ.get("LEAD_RESULT_FILE") or None
     self.overtake = OvertakeScript() if os.environ.get("LEAD_OVERTAKE") == "1" else None
     self.metrics = None
@@ -263,7 +264,8 @@ class SimulatorBridge(ABC):
       self.metrics = RunMetrics(os.environ.get("LEAD_SCENARIO", ""), float(distance) if distance else None,
                                 stop_when_stopped=self.overtake is None)
     record_dir = os.environ.get("LEAD_RECORD_DIR")
-    self.recorder = FrameRecorder(record_dir, int(os.environ.get("LEAD_RECORD_EVERY") or 1)) if record_dir else None
+    self.recorder = (FrameRecorder(record_dir, int(os.environ.get("LEAD_RECORD_EVERY") or 1),
+                                   images=os.environ.get("LEAD_RECORD_IMAGES", "1") != "0") if record_dir else None)
     self.end_reason = None
     self.wall_start = None   # (wall clock, simulated clock) at the first scored sample
 
@@ -368,7 +370,14 @@ class SimulatorBridge(ABC):
     """Hand the camera frame openpilot was just given to the recorder, with the simulator's truth for that frame."""
     truth, lateral = self.world.truth_lead(), self.world.truth_lateral()
     seen = self.seen_lead()
+    leads = self.sm['modelV2'].leadsV3
+    model_lead = None
+    if len(leads) > 0:   # what the camera model says before radard filters it
+      lead = leads[0]
+      model_lead = {"x": lead.x[0], "y": lead.y[0], "v": lead.v[0], "x_std": lead.xStd[0], "v_std": lead.vStd[0],
+                    "prob": lead.prob}
     self.recorder.add(self.world.road_bgra_image, {
+      "model_lead": model_lead,
       "tick": self.world.tick_count, "wall_s": time.monotonic(), "engaged": bool(self.simulator_state.is_engaged),
       "ego_speed": self.simulator_state.speed, "pose": self.world.ego_pose(),
       "truth_gap": None if truth is None else truth[0], "truth_v": None if truth is None else truth[1],
@@ -476,7 +485,7 @@ class SimulatorBridge(ABC):
     self.simulated_sensors = SimulatedSensors()
     # The car thread has its own SubMaster; never share one across threads.
     self.sm = messaging.SubMaster(['carState', 'carControl', 'controlsState', 'lateralPlan', 'radarState',
-                                  'longitudinalPlan'])
+                                  'longitudinalPlan', 'modelV2'])
 
     self._exit_event = threading.Event()
     threading.Thread(target=rk_loop, daemon=True,
