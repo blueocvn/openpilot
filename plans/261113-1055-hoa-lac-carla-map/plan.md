@@ -56,7 +56,7 @@ Chạy được `bash run.sh all --carla-town HoaLac --carla-spawn-point <n>` tr
 
 | # | Phase | Status |
 |---|-------|--------|
-| 1 | [Thử swap sim sang CARLA 0.9.15](./phase-01-trial-swap-to-carla-0915.md) | Pending |
+| 1 | [Thử swap sim sang CARLA 0.9.15](./phase-01-trial-swap-to-carla-0915.md) | Done: cổng đạt, đã xác nhận ([báo cáo](./reports/swap-trial-0915.md)) |
 | 2 | [Chuyển mặc định sang 0.9.15](./phase-02-switch-default-to-0915.md) | Pending |
 | 3 | [Dựng CARLA 0.9.15 từ source](./phase-03-build-carla-0915-source.md) | Pending |
 | 4 | [Chuẩn bị dữ liệu OSM lưới trục N](./phase-04-prepare-osm-core-grid.md) | Pending |

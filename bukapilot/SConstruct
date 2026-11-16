@@ -240,6 +240,24 @@ env = Environment(
 
 if arch == "Darwin":
   env['RPATHPREFIX'] = "-rpath "
+else:
+  # RPATH entries inside the checkout become $ORIGIN-relative to each output file, so a built tree keeps working
+  # when the checkout is moved or bind-mounted at another path. Paths outside the checkout stay absolute.
+  repo_root = Dir("#").abspath
+
+  def origin_rpath(target, rpath):
+    out_dir = os.path.dirname(target[0].get_abspath()) if target else repo_root
+    flags = []
+    for entry in rpath:
+      path = entry.abspath if hasattr(entry, "abspath") else os.path.abspath(str(entry))
+      if path == repo_root or path.startswith(repo_root + os.sep):
+        rel = os.path.relpath(path, out_dir)
+        path = "$$ORIGIN" if rel == "." else f"$$ORIGIN/{rel}"
+      flags.append(f"-Wl,-rpath='{path}'")
+    return flags
+
+  env['_origin_rpath'] = origin_rpath
+  env['_RPATH'] = '${_origin_rpath(TARGETS, RPATH)}'
 
 if GetOption('compile_db'):
   env.CompilationDatabase('compile_commands.json')

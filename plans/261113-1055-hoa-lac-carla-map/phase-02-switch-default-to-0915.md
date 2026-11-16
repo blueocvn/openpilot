@@ -32,7 +32,7 @@ Chỉ làm khi cổng Phase 1 đạt. Đổi mặc định của `tools/sim-linu
 1. Đổi mặc định `CARLA_VERSION` thành `0.9.15` ở bốn file; tên image mặc định thành `carla-sim:0.9.15`.
 2. Dựng lại asset logo người lái cho 0.9.15 bằng `build_rider_logo.py`; kiểm bằng mắt trên cửa sổ CARLA.
 3. Áp dụng các chỉnh sửa mà báo cáo Phase 1 nêu (điểm spawn tương đương, gamma).
-4. Chạy `bash bench.sh full` trên 0.9.15, lưu `results.md` làm baseline mới.
+4. Chạy `bash bench.sh standard` trên 0.9.15, lưu `results.md` làm baseline mới.
 5. Cập nhật tài liệu và plan vật cản; ghi rõ baseline cũ đo trên 0.9.12.
 6. Hỏi người dùng trước khi động tới nhánh Windows/WSL (`tools/sim/run.sh:103`, `tools/sim/run.ps1:22`): không kiểm chứng được trên máy này.
 
@@ -41,7 +41,7 @@ Chỉ làm khi cổng Phase 1 đạt. Đổi mặc định của `tools/sim-linu
 - [ ] Đổi mặc định ở Dockerfile và script
 - [ ] Dựng lại asset logo cho 0.9.15
 - [ ] Áp dụng chỉnh sửa từ báo cáo Phase 1
-- [ ] `bench.sh full` làm baseline mới
+- [ ] `bench.sh standard` làm baseline mới
 - [ ] Cập nhật tài liệu sim
 - [ ] Cập nhật plan vật cản
 - [ ] Chốt với người dùng về nhánh Windows/WSL
@@ -50,7 +50,7 @@ Chỉ làm khi cổng Phase 1 đạt. Đổi mặc định của `tools/sim-linu
 
 - `bash run.sh all --carla-town Town04_Opt --carla-spawn-point <chỉ số tương đương 16>` chạy trên 0.9.15 không đặt biến.
 - `CARLA_VERSION=0.9.12 bash run.sh all ...` vẫn chạy.
-- Có `results.md` của `bench.sh full` trên 0.9.15.
+- Có `results.md` của `bench.sh standard` trên 0.9.15.
 - `grep -rn "0\.9\.12" bukapilot/tools/sim-linux-docker` chỉ còn các chỗ nói về lựa chọn quay lại.
 
 ## Risk Assessment

@@ -6,7 +6,7 @@ Last update: 2026-11-13 12:45. Work paused before the full baseline run (phase 1
 
 | Phase | State | Note |
 |---|---|---|
-| 1. Benchmark and baseline | Code done, every scenario exercised once; full baseline not run | `BENCH_JOBS=2 bash bench.sh full`, about 45 to 60 minutes |
+| 1. Benchmark and baseline | Code done, every scenario exercised once; full baseline not run | `bash bench.sh standard` (5 cells at 60 km/h, see `bench.md`), about 8 minutes |
 | 2. Hypothesis checks | H2 done (rejected); H1, H3, H4 not started | H1 and H4 need the phase 1 runner in Town04 |
 | 3 to 6 | Not started | Phases 3 and 5 need approval before any `selfdrive/` edit |
 
@@ -87,7 +87,7 @@ Not yet run with the final layout: Town04 obstacle scenarios (400 m), the overta
    ```bash
    cd tools/sim-linux-docker
    bash bench.sh run stationary-motorcycle Town04_Opt 30 3    # noise floor in the other town
-   BENCH_JOBS=2 bash bench.sh full                             # 3 repeats per cell, 21 cells
+   bash bench.sh standard                                      # 5 cells at 60 km/h, one run each, a failed run gets one more
    bash bench.sh stop
    ```
 

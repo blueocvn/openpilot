@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # One entry point for bukapilot + CARLA on native Ubuntu (Docker). Same commands as ../sim/run.sh.
 #
-#   bash run.sh setup                       # one time: build the images (bukapilot-sim:local, carla-sim:0.9.12)
+#   bash run.sh setup                       # one time: build the images (bukapilot-sim:carla-0.9.15, carla-sim:0.9.15)
+#   CARLA_VERSION=0.9.12 bash run.sh all    # the previous CARLA release (images bukapilot-sim:local, carla-sim:0.9.12)
 #   bash run.sh setup-ui                    # one time: openpilot's UI venv (.venv + scons --minimal), for OP_UI=1
 #   bash run.sh all [bridge args]           # CARLA (background) + bukapilot + bridge
 #   bash run.sh all --carla-town Town04_Opt --carla-spawn-point 16
@@ -9,7 +10,7 @@
 #   bash run.sh all --lead-log              # detailed log: what openpilot sees vs the simulator's ground truth
 #   bash run.sh server | bridge [args] | status | stop
 #
-# Environment: CARLA_HEADLESS=1, CARLA_QUALITY=Low|High (default High), CARLA_PORT=2000,
+# Environment: CARLA_VERSION=0.9.15 (CARLA server and client release; 0.9.12 still works), CARLA_HEADLESS=1, CARLA_QUALITY=Low|High (default High), CARLA_PORT=2000,
 #              OP_UI=1 (openpilot UI on the host) | 0 (bukapilot Qt UI). Default: 1 if <openpilot>/.venv exists, else 0.
 #              SKIP_BUILD=1 (skip scons), SHELL_ONLY=1, YELLOW_PATH=1 (same as --yellow-path; OP_UI=1 only).
 #              ALC_MIN_SPEED_KPH=30 (lowest speed for a lane change; real cars keep 30 mph),
@@ -20,7 +21,10 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 ROOT="$(cd "$DIR/../.." && pwd)"          # bukapilot root
 OP_ROOT="$(cd "$ROOT/.." && pwd)"         # openpilot repo root (holds .venv)
-IMAGE="${IMAGE:-bukapilot-sim:local}"
+CARLA_VERSION="${CARLA_VERSION:-0.9.15}"
+# the bukapilot image carries the carla client, so it is per CARLA version (0.9.12 keeps its original name)
+if [ "$CARLA_VERSION" == "0.9.12" ]; then IMAGE="${IMAGE:-bukapilot-sim:local}"; else IMAGE="${IMAGE:-bukapilot-sim:carla-$CARLA_VERSION}"; fi
+export CARLA_VERSION IMAGE
 CARLA_NAME="${CARLA_NAME:-carla_server}"
 BRIDGE_NAME="${NAME:-bukapilot_sim_carla}"
 export CARLA_PORT="${CARLA_PORT:-2000}"
@@ -38,12 +42,14 @@ fi
 export OP_UI
 
 setup() {
-  docker image inspect "$IMAGE" >/dev/null 2>&1 || (cd "$ROOT" && docker build -t "$IMAGE" -f tools/sim-linux-docker/Dockerfile.bukapilot .)
-  # start_carla.sh builds carla-sim:0.9.12 on first use (windowed) or pulls carlasim/carla:0.9.12 (headless)
+  docker image inspect "$IMAGE" >/dev/null 2>&1 || (cd "$ROOT" && docker build -t "$IMAGE" \
+    --build-arg CARLA_VERSION="$CARLA_VERSION" -f tools/sim-linux-docker/Dockerfile.bukapilot .)
+  # start_carla.sh builds carla-sim:<version> on first use (windowed) or pulls carlasim/carla:<version> (headless)
   if [ "${CARLA_HEADLESS:-0}" == "1" ]; then
-    docker image inspect carlasim/carla:0.9.12 >/dev/null 2>&1 || docker pull carlasim/carla:0.9.12
+    docker image inspect "carlasim/carla:$CARLA_VERSION" >/dev/null 2>&1 || docker pull "carlasim/carla:$CARLA_VERSION"
   else
-    docker image inspect carla-sim:0.9.12 >/dev/null 2>&1 || docker build -t carla-sim:0.9.12 -f "$DIR/Dockerfile.carla" "$DIR"
+    docker image inspect "carla-sim:$CARLA_VERSION" >/dev/null 2>&1 || docker build -t "carla-sim:$CARLA_VERSION" \
+      --build-arg CARLA_VERSION="$CARLA_VERSION" -f "$DIR/Dockerfile.carla" "$DIR"
   fi
   echo "images ready. First 'start_docker.sh' run also builds libyuv, fetches acados and runs scons (slow)."
 }

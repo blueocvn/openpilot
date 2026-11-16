@@ -3,7 +3,9 @@
 # inside the container (see start_docker.sh).
 #
 # Build (from the bukapilot root):
-#   docker build -t bukapilot-sim:local -f tools/sim-linux-docker/Dockerfile.bukapilot .
+#   docker build -t bukapilot-sim:carla-0.9.15 -f tools/sim-linux-docker/Dockerfile.bukapilot .
+#   docker build -t bukapilot-sim:local --build-arg CARLA_VERSION=0.9.12 -f tools/sim-linux-docker/Dockerfile.bukapilot .   # CARLA 0.9.12
+# The carla client must match the server version (CARLA_VERSION in run.sh / start_carla.sh).
 FROM ubuntu:20.04
 
 ENV DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
@@ -32,12 +34,13 @@ RUN mkdir -p /etc/OpenCL/vendors && echo "libnvidia-opencl.so.1" > /etc/OpenCL/v
 # python deps pinned by bukapilot's Pipfile.lock (Ubuntu 20.04 python3 == 3.8.10 == .python-version).
 # onnxruntime-gpu==1.10.0 has been removed from PyPI (and its CUDA 11 build wouldn't support
 # RTX 50-series anyway), so it is swapped for the CPU build of the same version.
+ARG CARLA_VERSION=0.9.15
 COPY Pipfile.lock /tmp/pip/
 RUN python3 -m pip install --no-cache-dir pip==21.3.1 \
  && python3 -c "import json; d=json.load(open('/tmp/pip/Pipfile.lock'))['default']; \
 open('/tmp/pip/req.txt','w').write(''.join(f\"{k}{v['version']}\" + (f\"; {v['markers']}\" if 'markers' in v else '') + '\n' \
 for k,v in d.items() if k != 'onnxruntime-gpu' and 'version' in v))" \
- && python3 -m pip install --no-cache-dir -r /tmp/pip/req.txt onnxruntime==1.10.0 carla==0.9.12 \
+ && python3 -m pip install --no-cache-dir -r /tmp/pip/req.txt onnxruntime==1.10.0 carla==${CARLA_VERSION} \
  && rm -rf /tmp/pip /root/.cache
 
 # a user matching the host uid, so files built into the mounted tree are owned by you

@@ -576,6 +576,7 @@ class SimulatorBridge(ABC):
       throttle_op = brake_op = 0.0
       steer_op = 0.0
       if s.is_engaged:
+        self.world.release_obstacles()
         throttle_op, brake_op = self._openpilot_longitudinal(pedals_manual)
         steer_op = rate_limit(self.last_steer, self.sm['carControl'].actuators.steeringAngleDeg, self.STEER_RATE_LIMIT)
         self.past_startup_engaged = True

@@ -1,8 +1,8 @@
 """CARLA world for the bukapilot bridge, ported from
 openpilot/tools/sim/bridge/carla/carla_world.py.
 
-Kept compatible with the CARLA 0.9.12 Python API pinned in
-tools/sim/Dockerfile.bukapilot (no Client.load_world_if_different), and with
+Kept compatible with the CARLA 0.9.12 and 0.9.15 Python APIs (tools/sim-linux-docker defaults to 0.9.15; the
+Windows/WSL path in tools/sim still pins 0.9.12, which has no Client.load_world_if_different), and with
 the legacy bridge's camera mount, which matches the 0.8.13 EON-era model.
 """
 import collections
@@ -37,6 +37,7 @@ class CarlaWorld(World):
     self.traffic_manager = None
     self.motorcycles = []
     self.obstacles = []
+    self.obstacles_released = False  # moving obstacles wait for release_obstacles()
     self.collisions = collections.deque(maxlen=32)  # (other actor type, impulse N*s), filled by the CARLA sensor thread
     self.tick_count = 0
     self.camera_queue = queue.Queue(maxsize=4)
@@ -241,7 +242,8 @@ class CarlaWorld(World):
 
     specs: list of (kind, distance_m, speed_kph), kind a key of OBSTACLE_KINDS. Vehicles rest on the road with the
     hand brake on; props are static. A motorcycle with a speed is driven by this class, not by the Traffic Manager:
-    it follows the straight road ahead at that constant speed and never turns at a junction (see _move_obstacles).
+    it waits at its start point until the ego car engages (release_obstacles), then follows the straight road ahead at
+    that constant speed and never turns at a junction (see _move_obstacles).
     """
     library = self.world.get_blueprint_library()
     ego_wp = self.world.get_map().get_waypoint(self.spawn_transform.location)
@@ -278,8 +280,15 @@ class CarlaWorld(World):
         entry["actor"].set_simulate_physics(False)
     print(f"CARLA: {len(self.obstacles)}/{len(specs)} obstacles: " + ", ".join(o["label"] for o in self.obstacles), flush=True)
 
+  def release_obstacles(self):
+    if not self.obstacles_released and any("speed" in entry for entry in self.obstacles):
+      print("CARLA: moving obstacles released", flush=True)
+    self.obstacles_released = True
+
   def _move_obstacles(self):
     """Advance the driven obstacles one simulation step along their straight path at constant speed."""
+    if not self.obstacles_released:
+      return
     for entry in self.obstacles:
       if "speed" not in entry or not entry["actor"].is_alive:
         continue

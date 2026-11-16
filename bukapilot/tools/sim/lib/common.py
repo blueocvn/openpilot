@@ -90,6 +90,10 @@ class World(ABC):
     """[(other actor type, impulse)] of the ego car since the last call, for logging only."""
     return []
 
+  def release_obstacles(self):
+    """Let the scripted moving obstacles start; until then they wait at their start point. Called once the ego car
+    is engaged, so the scenario does not depend on how long start-up and engaging took."""
+
   @abstractmethod
   def apply_controls(self, steer_angle, throttle_out, brake_out):
     pass

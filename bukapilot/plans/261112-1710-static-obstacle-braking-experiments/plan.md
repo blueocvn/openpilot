@@ -4,7 +4,7 @@ status: draft, awaiting approval
 mode: auto (standard)
 created: 2026-11-12
 revised: 2026-11-12 (assured clear distance, overtaking rules, simulation-only scope)
-platform: tools/sim-linux-docker (Linux Docker, CARLA 0.9.12, camera-only)
+platform: tools/sim-linux-docker (Linux Docker, CARLA 0.9.15 since 2026-11-16, earlier baselines on 0.9.12, camera-only)
 evidence: ../Report/report.md
 blockedBy: []
 blocks: []

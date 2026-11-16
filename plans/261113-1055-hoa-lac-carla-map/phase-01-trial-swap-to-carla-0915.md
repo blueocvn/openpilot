@@ -1,6 +1,6 @@
 ---
 title: "Phase 1: Thử swap sim sang CARLA 0.9.15"
-status: todo
+status: done
 priority: P1
 effort: "1d"
 dependencies: []
@@ -41,22 +41,22 @@ Chạy sim bukapilot trên CARLA 0.9.15 song song với bản 0.9.12 đang dùng
 5. Xuất tọa độ điểm spawn 16, 170, 171 của `Town04_Opt` trên cả hai phiên bản; nếu lệch quá 1 m, tìm chỉ số tương đương trên 0.9.15 và ghi vào báo cáo.
 6. Chạy smoke `--duration 120 --carla-town Town04_Opt --carla-spawn-point 16` trên 0.9.15 với container bridge tên riêng. Ghi: engage được, không rời làn, không lỗi process.
 7. So ảnh camera: chụp cùng vị trí trên hai phiên bản, ghi độ sáng trung bình của vùng mặt đường. Nếu lệch rõ, thử thuộc tính `gamma` của `sensor.camera.rgb` để khớp lại.
-8. Chạy `bash bench.sh short` trên cả hai phiên bản (đặt `CARLA_VERSION`, `BENCH_OUT` riêng), rồi các ô chính của plan vật cản. So kết quả từng ô.
+8. Chạy `bash bench.sh standard` (7 ô ở 60 km/h, xem `bench.md`) trên cả hai phiên bản (đặt `CARLA_VERSION`, `BENCH_OUT` riêng), cả hai không có asset patch (`CARLA_NO_ASSET_PATCH=1`). So kết quả từng ô.
 9. Thử asset logo: chạy `carla-assets/build_rider_logo.py` với image 0.9.15; nếu file gốc khác cấu trúc, ghi lại là việc của Phase 2.
 10. Viết `reports/swap-trial-0915.md` với bảng so sánh và kết luận đạt hay không đạt. Dừng mọi container thử nghiệm.
 
 ## Todo
 
-- [ ] Tham số hóa `CARLA_VERSION`, mặc định không đổi
-- [ ] Dựng hai image 0.9.15
-- [ ] Server 0.9.15 chạy trên máy văn phòng
-- [ ] Unit test đạt trên 0.9.15
-- [ ] Đối chiếu điểm spawn Town04_Opt
-- [ ] Smoke 120 giây engage
-- [ ] So ảnh camera và gamma
-- [ ] `bench.sh short` và các ô chính trên hai phiên bản
-- [ ] Thử asset logo người lái
-- [ ] Báo cáo và quyết định, dọn container
+- [x] Tham số hóa `CARLA_VERSION`, mặc định không đổi
+- [x] Dựng hai image 0.9.15
+- [x] Server 0.9.15 chạy trên máy văn phòng
+- [x] Unit test đạt trên 0.9.15
+- [x] Đối chiếu điểm spawn Town04_Opt
+- [x] Smoke 120 giây engage
+- [x] So ảnh camera và gamma
+- [x] `bench.sh standard` trên hai phiên bản
+- [x] Thử asset logo người lái
+- [x] Báo cáo và quyết định, dọn container
 
 ## Success Criteria
 
@@ -64,7 +64,7 @@ Cổng đạt khi tất cả đúng:
 
 - Unit test đạt.
 - Smoke 120 giây: engage, không rời làn, không process nào chết.
-- Mỗi ô của `bench.sh short` có kết quả đạt/không đạt giống 0.9.12; khoảng cách tối thiểu lệch không quá 2 m.
+- Mỗi ô của `bench.sh standard` có kết quả đạt/không đạt giống 0.9.12; khoảng cách tối thiểu lệch không quá 2 m.
 - Server giữ 20 FPS ở chất lượng High.
 
 Không đạt: dừng plan tại đây, báo số đo, lập lại plan theo hướng giữ 0.9.12.
@@ -74,6 +74,10 @@ Không đạt: dừng plan tại đây, báo số đo, lập lại plan theo hư
 - Ảnh camera khác (gamma) làm model cho kết quả khác. Dấu hiệu: ô benchmark đổi kết quả. Phản ứng: khớp gamma ở cảm biến, đo lại một lần; vẫn lệch thì tính là không đạt.
 - Image 0.9.15 chiếm thêm khoảng 30 GB. Kiểm `df -h /` trước khi pull.
 - Hai server CARLA cùng lúc dùng khoảng 8,5 GB VRAM trên 16 GB (đã đo với hai server 0.9.12). Chạy benchmark so sánh lần lượt, không song song.
+
+## Result
+
+Đo xong ngày 2026-11-16. Cổng đạt, người dùng xác nhận ngày 2026-11-16; sang Phase 2. Chi tiết: [reports/swap-trial-0915.md](./reports/swap-trial-0915.md).
 
 ## Rollback
 

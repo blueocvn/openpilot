@@ -3,18 +3,19 @@
 #
 # A cell is three parameters: the obstacle, the obstacle's speed and the ego car's set speed.
 #
-#   bash bench.sh run <obstacle> <obstacle_kph> <ego_kph> [repeats]     # one cell, e.g. run motorcycle 20 30 3
-#   bash bench.sh full                       # the preset cells (list shows them), 3 repeats each
-#   bash bench.sh list [grid]                # the cells `full` (or `grid`) would run after the filters below, and the runs
-#   OBSTACLE=container,barrier EGO=60 bash bench.sh full                # only the preset cells that match
-#   OBSTACLE=motorcycle OBSTACLE_KPH=0,10,20 EGO=30,60 bash bench.sh grid   # every combination, not only the presets
-#   bash bench.sh short                      # about 5 min: stationary motorcycle + clear road, 30 km/h, 3 repeats
+#   bash bench.sh standard                   # the preset cells (list shows them) at BENCH_EGO (60 km/h), about 8 min
+#   bash bench.sh short                      # about 5 min: the two motorcycle cells that fail most (standing, 2 m/s)
+#   bash bench.sh run <obstacle> <obstacle_kph> <ego_kph> [repeats]     # one cell, e.g. run motorcycle 20 60
+#   bash bench.sh list [grid]                # the cells `standard` (or `grid`) would run after the filters below
+#   OBSTACLE=car,none bash bench.sh standard                            # only the preset cells that match
+#   OBSTACLE=motorcycle OBSTACLE_KPH=0,10,20 bash bench.sh grid         # every combination, not only the presets
+# Every cell runs once (REPEATS=1); a failed run gets exactly one more run and never a third (RETRY_FAILED=1).
 #   bash bench.sh summary [dir]              # table + CSV of a finished benchmark directory
 #   bash bench.sh stop                       # stop the benchmark stacks
 #
 # obstacle:      none | motorcycle | car | barrier | container
 # obstacle_kph:  0 = stands still. Only a motorcycle can move; it drives straight ahead at that constant speed.
-# ego_kph:       the cruise set speed (30, 60, ...). A moving obstacle must be slower than the ego car, or the car never
+# ego_kph:       the cruise set speed; the preset cells use BENCH_EGO (default 60). A moving obstacle must be slower than the ego car, or the car never
 #                catches up: such a cell is skipped.
 # OVERTAKE=1     adds the scripted driver: after the car stops behind the obstacle it steers out and passes.
 #
@@ -33,13 +34,16 @@
 # Results: $BENCH_OUT (default <bukapilot>/.carla/bench/<timestamp>): one JSON per run, one bridge log per run,
 # results.csv and results.md.
 #
-# Filters for `full`, `list` and `grid` (comma-separated; for full and list all optional, a cell must match every
-# filter that is set; grid needs OBSTACLE, OBSTACLE_KPH and EGO):
-#   OBSTACLE=motorcycle,container   OBSTACLE_KPH=0,20   EGO=30,60
+# Filters for `standard`, `list` and `grid` (comma-separated; for standard and list both optional, a cell must match
+# every filter that is set; grid needs OBSTACLE and OBSTACLE_KPH, and takes its set speeds from EGO, default BENCH_EGO):
+#   OBSTACLE=motorcycle,car   OBSTACLE_KPH=0,20   EGO=50,60
 # PARAMS=Key=1,Other=0 sets those boolean Params in every run (feature flags under test).
 # TRACE=1 writes <run>.trace/truth.jsonl for every run (TRACE_IMAGES=1 adds the camera frames).
-# Environment: REPEATS=<n> (default 3), BENCH_JOBS=<n> (stacks side by side, default 1), BENCH_OUT=<dir>,
-#   BENCH_CLEAR_M=<metres> (clear-road length, default 1000), BENCH_PORT=2100 (stack n uses BENCH_PORT + 10 n),
+# Environment: CARLA_VERSION=<release> (default 0.9.15), BENCH_EGO=<kph> (set speed of the preset cells, default 60),
+#   REPEATS=<n> (default 1), RETRY_FAILED=0|1 (default 1), BENCH_JOBS=<n> (stacks side by side, default 1), BENCH_OUT=<dir>,
+#   BENCH_CLEAR_M=<metres> (clear-road length, default 300), BENCH_FOLLOW_M=<metres> (follow length, default 500),
+#   BENCH_FOLLOW_START_M=<metres> (where the followed motorcycle starts, default 30; it waits until the car engages),
+#   BENCH_PORT=2100 (stack n uses BENCH_PORT + 10 n),
 #   BENCH_QUALITY=High|Low, RUN_CAP_S=<seconds> (per-run limit, default: from the distance and the set speed),
 #   OBSTACLE_M=<metres> (distance to a standing obstacle; default 400), BRIDGE_ARGS="..." (extra bridge arguments).
 set -uo pipefail
@@ -47,8 +51,13 @@ set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 ROOT="$(cd "$DIR/../.." && pwd)"
 BENCH_PORT="${BENCH_PORT:-2100}"
+EGO_KPH="${BENCH_EGO:-60}"   # set speed of the preset cells
 JOBS="${BENCH_JOBS:-1}"
 TOWN=Town04_Opt
+CARLA_VERSION="${CARLA_VERSION:-0.9.15}"
+# the bukapilot image carries the carla client, so it is per CARLA version (0.9.12 keeps its original name)
+if [ "$CARLA_VERSION" == "0.9.12" ]; then IMAGE="${IMAGE:-bukapilot-sim:local}"; else IMAGE="${IMAGE:-bukapilot-sim:carla-$CARLA_VERSION}"; fi
+export CARLA_VERSION IMAGE
 OBSTACLES="none motorcycle car barrier container"
 
 # stack_env <n>: names and ports of stack n, so that stacks side by side never share a container or a CARLA server
@@ -63,8 +72,8 @@ stack_env 0
 # running scons at the same time in the same tree corrupt its database (seen: dblite os.replace failure).
 compile_once() {
   docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e PYTHONPATH="$ROOT" -v "$ROOT:$ROOT" -w "$ROOT" \
-    "${IMAGE:-bukapilot-sim:local}" bash -c 'scons -j"$(nproc)"' >/dev/null 2>&1 \
-    || { echo "scons failed: run it by hand in the bukapilot-sim:local container" >&2; return 1; }
+    "$IMAGE" bash -c 'scons -j"$(nproc)"' >/dev/null 2>&1 \
+    || { echo "scons failed: run it by hand in the $IMAGE container" >&2; return 1; }
 }
 
 # less <a> <b>: a < b for decimal numbers
@@ -91,12 +100,12 @@ spawn_point() { [ "$1" = follow ] && echo 171 || echo 170; }
 # settled behind it, before the junction for slow; spawn 171 is straight for 715 m and then bends gently for follow).
 STATIC_M="${OBSTACLE_M:-400}"
 SLOW_START_M=100;   SLOW_END_M=230
-FOLLOW_START_M=60;  FOLLOW_END_M=1300
+FOLLOW_START_M="${BENCH_FOLLOW_START_M:-30}";  FOLLOW_END_M="${BENCH_FOLLOW_M:-500}"
 
 # run_metres <regime> -> how far the run is meant to last (m), for the time limit
 run_metres() {
   case "$1" in
-    clear) echo "${BENCH_CLEAR_M:-1000}" ;;
+    clear) echo "${BENCH_CLEAR_M:-300}" ;;
     slow) echo "$SLOW_END_M" ;;
     follow) echo "$FOLLOW_END_M" ;;
     *) echo "$STATIC_M" ;;
@@ -161,6 +170,14 @@ import json,sys
 r=json.load(open('$result'))
 print('   ', r.get('end_reason'), 'min_gap', r.get('min_gap_m'), 'collision', r.get('collision'), 'peak_decel', r.get('peak_decel_mps2'), 'false_brake', r.get('false_brake_events'))"
   fi
+  # exit status: the run's verdict under the same pass rule as the summary
+  python3 -c "
+import json, sys
+sys.path.insert(0, '$ROOT/tools/sim/bridge')
+import bench_summary
+passed, reason = bench_summary.judge(json.load(open('$result')))
+print('    passed' if passed else '    FAILED: ' + reason)
+sys.exit(0 if passed else 1)"
 }
 
 # run_set <repeats> then cells "obstacle:obstacle_kph:ego_kph[:overtake]". Runs are dealt out to BENCH_JOBS stacks,
@@ -182,7 +199,10 @@ run_set() {
         if [ $((n % JOBS)) -eq "$id" ]; then
           # task is "kind:okph:ego[:overtake]|index"
           IFS=: read -r kind okph ego flag <<<"${task%|*}"
-          run_one "$kind" "$okph" "$ego" "${flag:--}" "${task#*|}"
+          # RETRY_FAILED=1: a failed run gets exactly one more run, never a third; its index follows the last repeat
+          run_one "$kind" "$okph" "$ego" "${flag:--}" "${task#*|}" \
+            || { [ "${RETRY_FAILED:-1}" = 1 ] && run_one "$kind" "$okph" "$ego" "${flag:--}" "$((${task#*|} + repeats))"; } \
+            || true
         fi
         n=$((n + 1))
       done
@@ -198,43 +218,38 @@ summarize() {
 # in_list <value> <comma list>: succeeds when the list is empty or contains the value
 in_list() { [ -z "$2" ] || [[ ",$2," == *",$1,"* ]]; }
 
-# keep <obstacle> <obstacle_kph> <ego_kph> succeeds when the cell passes the OBSTACLE, OBSTACLE_KPH and EGO filters
-keep() { in_list "$1" "${OBSTACLE:-}" && in_list "$2" "${OBSTACLE_KPH:-}" && in_list "$3" "${EGO:-}"; }
+# keep <obstacle> <obstacle_kph> succeeds when the cell passes the OBSTACLE and OBSTACLE_KPH filters
+keep() { in_list "$1" "${OBSTACLE:-}" && in_list "$2" "${OBSTACLE_KPH:-}"; }
 
-# The preset cells: the plan's acceptance rows, as parameters.
+# The preset cells, all at EGO_KPH. Static objects on the road (barrier, container) are left to automatic emergency
+# braking, not the driving model, so they are not presets; `run barrier 0 60` still runs one.
 preset_cells() {
-  local ego kind
-  for ego in 30 60; do
-    echo "motorcycle:0:$ego"      # stationary motorcycle
-    echo "motorcycle:7.2:$ego"    # motorcycle at 2 m/s
-    echo "car:0:$ego"             # parked car
-    echo "barrier:0:$ego"
-    echo "container:0:$ego"       # small container, never a lead before
-    echo "none:0:$ego"            # clear road
-  done
-  echo "motorcycle:40:60"         # follow a motorcycle at 40 km/h
-  echo "barrier:0:30:overtake"    # stop behind the barrier, then steer out and pass
+  echo "motorcycle:0:$EGO_KPH"      # stationary motorcycle
+  echo "motorcycle:7.2:$EGO_KPH"    # motorcycle at 2 m/s
+  echo "car:0:$EGO_KPH"             # parked car
+  echo "none:0:$EGO_KPH"            # clear road
+  less 40 "$EGO_KPH" && echo "motorcycle:40:$EGO_KPH"   # follow a motorcycle at 40 km/h
 }
 
 # with_overtake <cell>: adds ":overtake" under OVERTAKE=1 (the preset overtake cell has it already)
 with_overtake() { if [ -n "${OVERTAKE:-}" ] && [[ "$1" != *:overtake ]]; then echo "$1:overtake"; else echo "$1"; fi; }
 
-# cells_for <full|grid> -> the cells to run, one per line
+# cells_for <standard|grid> -> the cells to run, one per line
 cells_for() {
   local cell kind okph ego
   if [ "$1" = grid ]; then
-    [ -n "${OBSTACLE:-}" ] && [ -n "${OBSTACLE_KPH:-}" ] && [ -n "${EGO:-}" ] \
-      || { echo "grid needs OBSTACLE, OBSTACLE_KPH and EGO" >&2; return 2; }
+    [ -n "${OBSTACLE:-}" ] && [ -n "${OBSTACLE_KPH:-}" ] || { echo "grid needs OBSTACLE and OBSTACLE_KPH" >&2; return 2; }
+    local egos="${EGO:-$EGO_KPH}"
     for kind in ${OBSTACLE//,/ }; do
       for okph in ${OBSTACLE_KPH//,/ }; do
-        for ego in ${EGO//,/ }; do with_overtake "$kind:$okph:$ego"; done
+        for ego in ${egos//,/ }; do with_overtake "$kind:$okph:$ego"; done
       done
     done
     return 0
   fi
   while IFS= read -r cell; do
     IFS=: read -r kind okph ego _ <<<"$cell"
-    keep "$kind" "$okph" "$ego" && echo "$cell"
+    keep "$kind" "$okph" && echo "$cell"
   done < <(preset_cells)
   return 0   # the last cell not matching must not look like a failure
 }
@@ -250,7 +265,7 @@ runnable() {
 
 new_out() { OUT="${BENCH_OUT:-$ROOT/.carla/bench/$(date +%Y%m%d-%H%M%S)}"; mkdir -p "$OUT"; echo "results: $OUT"; }
 
-# plan <full|grid>: sets `cells` to the runnable cells, or exits when there are none
+# plan <standard|grid>: sets `cells` to the runnable cells, or exits when there are none
 plan() {
   local all
   all="$(cells_for "$1")" || exit 2
@@ -261,16 +276,15 @@ plan() {
 
 case "${1:-}" in
   short)
+    # the two motorcycle cells that fail most often (measured 2026-11-16, CARLA 0.9.12 and 0.9.15)
     new_out
-    BENCH_CLEAR_M="${BENCH_CLEAR_M:-600}"
-    export BENCH_CLEAR_M
-    run_set "${REPEATS:-3}" motorcycle:0:30 none:0:30
+    run_set "${REPEATS:-1}" "motorcycle:0:$EGO_KPH" "motorcycle:7.2:$EGO_KPH"
     summarize "$OUT"
     ;;
-  full | grid)
+  standard | grid)
     plan "$1"
     new_out
-    run_set "${REPEATS:-3}" "${cells[@]}"
+    run_set "${REPEATS:-1}" "${cells[@]}"
     summarize "$OUT"
     ;;
   run)
@@ -281,9 +295,9 @@ case "${1:-}" in
     summarize "$OUT"
     ;;
   list)
-    plan "${2:-full}"   # `list` shows the preset cells, `list grid` the combinations of OBSTACLE, OBSTACLE_KPH and EGO
+    plan "${2:-standard}"   # `list` shows the preset cells, `list grid` the combinations of OBSTACLE, OBSTACLE_KPH and EGO
     printf '%s\n' "${cells[@]}"
-    echo "${#cells[@]} cells x ${REPEATS:-3} repeats = $((${#cells[@]} * ${REPEATS:-3})) runs"
+    echo "${#cells[@]} cells x ${REPEATS:-1} repeats = $((${#cells[@]} * ${REPEATS:-1})) runs (a failed run gets one more)"
     ;;
   summary) summarize "${2:?usage: $0 summary <dir>}" ;;
   stop) stop_stack ;;

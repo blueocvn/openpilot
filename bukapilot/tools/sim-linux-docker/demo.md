@@ -1,13 +1,13 @@
 # Lệnh demo bukapilot + CARLA (Docker)
 
 ```bash
-cd /home/ubuntu/openpilot/bukapilot/tools/sim-linux-docker
+cd openpilot/bukapilot/tools/sim-linux-docker
 ```
 
 ## Chuẩn bị (một lần)
 
 ```bash
-bash run.sh setup        # build image bukapilot-sim:local, carla-sim:0.9.12
+bash run.sh setup        # build image bukapilot-sim:carla-0.9.15, carla-sim:0.9.15
 bash run.sh setup-ui     # tùy chọn: UI openpilot (OP_UI=1)
 ```
 
@@ -79,29 +79,30 @@ CARLA_QUALITY=Low YELLOW_PATH=1 bash run.sh all --carla-town Town04_Opt --carla-
 # sai: bash run.sh all ... CARLA_QUALITY=Low YELLOW_PATH=1
 ```
 
-| Biến | Giá trị | Mặc định | Ý nghĩa |
-|---|---|---|---|
-| `CARLA_HEADLESS` | `0` / `1` | `0` (tự chuyển sang `1` nếu không có `DISPLAY`) | `1`: CARLA chạy off-screen, không mở cửa sổ |
-| `CARLA_QUALITY` | `Low` / `High` | `High` | chất lượng render của CARLA |
-| `CARLA_PORT` | số cổng | `2000` | cổng server CARLA |
-| `CARLA_HOST` | địa chỉ IP | `127.0.0.1` | server CARLA mà bridge nối tới |
-| `CARLA_RES_X`, `CARLA_RES_Y` | số điểm ảnh | `1280`, `720` | kích thước cửa sổ CARLA (không áp dụng khi headless) |
-| `CARLA_SPECTATOR_MODE` | `chase` / `free` | `chase` | `chase`: góc nhìn bám sau xe; `free`: tự điều khiển góc nhìn |
-| `CARLA_CAMERA_X`, `CARLA_CAMERA_Z` | mét | `0.8`, `1.13` | vị trí camera đường của xe (tiến, cao) |
-| `CARLA_TM_PORT` | số cổng | một cổng trống tự chọn | cổng Traffic Manager cho xe máy |
-| `CARLA_NO_ASSET_PATCH` | `0` / `1` | `0` | `1`: dùng asset CARLA gốc, bỏ logo BlueOC trong `carla-assets/` |
-| `OP_UI` | `0` / `1` | `1` nếu có `/home/ubuntu/openpilot/.venv`, không thì `0` | `1`: UI openpilot trên host; `0`: UI Qt của bukapilot |
-| `OP_UI_PORT` | số cổng | `8765` | cổng relay giữa bukapilot và UI openpilot |
-| `YELLOW_PATH` | `0` / `1` | `0` | `1`: đường đi màu vàng, giống `--yellow-path` (chỉ có tác dụng với `OP_UI=1`) |
-| `LEAD_LOG` | `0` / `1` | `0` | `1`: log chi tiết về xe phía trước, giống `--lead-log` |
-| `ALC_MIN_SPEED_KPH` | km/h | `30` | tốc độ thấp nhất để ALC đổi làn trong mô phỏng. Xe thật không đặt biến này nên vẫn là 30 mph (48,3 km/h) |
-| `CARLA_KEYS` | `0` / `1` | `1` | `0`: không đọc phím từ cửa sổ CARLA, chỉ dùng terminal |
-| `CARLA_WINDOW_TITLE` | danh sách cách nhau bằng dấu phẩy | `CarlaUE4,=UI` | tên cửa sổ nhận phím: `CarlaUE4` khớp một phần tên, `=UI` khớp đúng tên `UI` |
-| `SKIP_BUILD` | `1` | không đặt | bỏ qua `scons` khi khởi động bridge |
-| `SHELL_ONLY` | `1` | không đặt | chỉ mở shell trong container bukapilot |
-| `IMAGE` | tên image | `bukapilot-sim:local` | image chạy bukapilot và bridge |
-| `CARLA_IMAGE` | tên image | `carla-sim:0.9.12` (headless: `carlasim/carla:0.9.12`) | image server CARLA |
-| `CARLA_NAME`, `NAME` | tên container | `carla_server`, `bukapilot_sim_carla` | tên container CARLA và bukapilot |
+| Biến                               | Giá trị                           | Mặc định                                               | Ý nghĩa                                                                                                  |
+| ---------------------------------- | --------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `CARLA_VERSION`                    | `0.9.15` / `0.9.12`               | `0.9.15`                                               | phiên bản CARLA (server, client và asset `carla-assets/<phiên bản>/`)                                    |
+| `CARLA_HEADLESS`                   | `0` / `1`                         | `0` (tự chuyển sang `1` nếu không có `DISPLAY`)        | `1`: CARLA chạy off-screen, không mở cửa sổ                                                              |
+| `CARLA_QUALITY`                    | `Low` / `High`                    | `High`                                                 | chất lượng render của CARLA                                                                              |
+| `CARLA_PORT`                       | số cổng                           | `2000`                                                 | cổng server CARLA                                                                                        |
+| `CARLA_HOST`                       | địa chỉ IP                        | `127.0.0.1`                                            | server CARLA mà bridge nối tới                                                                           |
+| `CARLA_RES_X`, `CARLA_RES_Y`       | số điểm ảnh                       | `1280`, `720`                                          | kích thước cửa sổ CARLA (không áp dụng khi headless)                                                     |
+| `CARLA_SPECTATOR_MODE`             | `chase` / `free`                  | `chase`                                                | `chase`: góc nhìn bám sau xe; `free`: tự điều khiển góc nhìn                                             |
+| `CARLA_CAMERA_X`, `CARLA_CAMERA_Z` | mét                               | `0.8`, `1.13`                                          | vị trí camera đường của xe (tiến, cao)                                                                   |
+| `CARLA_TM_PORT`                    | số cổng                           | một cổng trống tự chọn                                 | cổng Traffic Manager cho xe máy                                                                          |
+| `CARLA_NO_ASSET_PATCH`             | `0` / `1`                         | `0`                                                    | `1`: dùng asset CARLA gốc, bỏ logo BlueOC trong `carla-assets/<phiên bản>/`                              |
+| `OP_UI`                            | `0` / `1`                         | `1` nếu có `/openpilot/.venv`, không thì `0`           | `1`: UI openpilot trên host; `0`: UI Qt của bukapilot                                                    |
+| `OP_UI_PORT`                       | số cổng                           | `8765`                                                 | cổng relay giữa bukapilot và UI openpilot                                                                |
+| `YELLOW_PATH`                      | `0` / `1`                         | `0`                                                    | `1`: đường đi màu vàng, giống `--yellow-path` (chỉ có tác dụng với `OP_UI=1`)                            |
+| `LEAD_LOG`                         | `0` / `1`                         | `0`                                                    | `1`: log chi tiết về xe phía trước, giống `--lead-log`                                                   |
+| `ALC_MIN_SPEED_KPH`                | km/h                              | `30`                                                   | tốc độ thấp nhất để ALC đổi làn trong mô phỏng. Xe thật không đặt biến này nên vẫn là 30 mph (48,3 km/h) |
+| `CARLA_KEYS`                       | `0` / `1`                         | `1`                                                    | `0`: không đọc phím từ cửa sổ CARLA, chỉ dùng terminal                                                   |
+| `CARLA_WINDOW_TITLE`               | danh sách cách nhau bằng dấu phẩy | `CarlaUE4,=UI`                                         | tên cửa sổ nhận phím: `CarlaUE4` khớp một phần tên, `=UI` khớp đúng tên `UI`                             |
+| `SKIP_BUILD`                       | `1`                               | không đặt                                              | bỏ qua `scons` khi khởi động bridge                                                                      |
+| `SHELL_ONLY`                       | `1`                               | không đặt                                              | chỉ mở shell trong container bukapilot                                                                   |
+| `IMAGE`                            | tên image                         | `bukapilot-sim:carla-0.9.15` (0.9.12: `bukapilot-sim:local`) | image chạy bukapilot và bridge                                                                     |
+| `CARLA_IMAGE`                      | tên image                         | `carla-sim:0.9.15` (headless: `carlasim/carla:0.9.15`) | image server CARLA                                                                                       |
+| `CARLA_NAME`, `NAME`               | tên container                     | `carla_server`, `bukapilot_sim_carla`                  | tên container CARLA và bukapilot                                                                         |
 
 ## Chạy từng phần / quản lý
 

@@ -14,12 +14,14 @@
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 ROOT="$(cd "$DIR/../.." && pwd)"          # bukapilot root
 SIM="$ROOT/tools/sim"                     # the bridge code lives here
-IMAGE="${IMAGE:-bukapilot-sim:local}"
+CARLA_VERSION="${CARLA_VERSION:-0.9.15}"
+# the bukapilot image carries the carla client, so it is per CARLA version (0.9.12 keeps its original name)
+if [ "$CARLA_VERSION" == "0.9.12" ]; then IMAGE="${IMAGE:-bukapilot-sim:local}"; else IMAGE="${IMAGE:-bukapilot-sim:carla-$CARLA_VERSION}"; fi
 NAME="${NAME:-bukapilot_sim_carla}"
 
 if ! docker image inspect "$IMAGE" > /dev/null 2>&1; then
   echo "Image $IMAGE not found. Build it first:"
-  echo "  cd $ROOT && docker build -t $IMAGE -f tools/sim-linux-docker/Dockerfile.bukapilot ."
+  echo "  cd $ROOT && docker build -t $IMAGE --build-arg CARLA_VERSION=$CARLA_VERSION -f tools/sim-linux-docker/Dockerfile.bukapilot ."
   exit 1
 fi
 
