@@ -23,7 +23,7 @@ Digital Twin Tool chạy trong Unreal Editor, nên cần một bản CARLA 0.9.1
 ## Requirements
 
 - [ ] Người dùng liên kết tài khoản Epic Games với GitHub và đặt thông tin đăng nhập git trên máy (không ghi token vào repo).
-- [ ] Mã nguồn và sản phẩm biên dịch nằm ngoài repo, ví dụ `/home/ubuntu/carla-src/`.
+- [ ] Mã nguồn và sản phẩm biên dịch nằm ngoài repo, ví dụ `/home/ubuntu/Project/carla-src/`.
 - [ ] Unreal Editor mở được dự án CARLA trên màn hình máy văn phòng.
 
 ## Files to Create / Modify
@@ -36,11 +36,11 @@ Digital Twin Tool chạy trong Unreal Editor, nên cần một bản CARLA 0.9.1
 
 1. Kiểm `df -h /`: cần còn ít nhất 180 GB sau khi đã có image 0.9.15. Nếu thiếu, hỏi người dùng trước khi xóa bất kỳ image nào (ví dụ các image 0.9.16 và bản trùng `carlasim/*`).
 2. Viết `Dockerfile.carla-source` theo danh sách gói của tài liệu 0.9.15 cho Ubuntu 20.04; dựng image.
-3. Người dùng xác nhận đã có quyền vào kho Unreal. Clone nhánh `carla` vào `/home/ubuntu/carla-src/UnrealEngine_4.26`; chạy `Setup.sh`, `GenerateProjectFiles.sh`, `make` trong container.
-4. Clone CARLA tag `0.9.15` vào `/home/ubuntu/carla-src/carla`; chạy `Update.sh` để tải asset; đặt `UE4_ROOT`.
+3. Người dùng xác nhận đã có quyền vào kho Unreal. Clone nhánh `carla` vào `/home/ubuntu/Project/carla-src/UnrealEngine_4.26`; chạy `Setup.sh`, `GenerateProjectFiles.sh`, `make` trong container.
+4. Clone CARLA tag `0.9.15` vào `/home/ubuntu/Project/carla-src/carla`; chạy `Update.sh` để tải asset; đặt `UE4_ROOT`.
 5. Chạy `make launch` trong container với X11 của máy chủ; chờ biên dịch shader; mở map mặc định và bấm Play.
 6. Chạy `make osmrenderer` (trình xem OSM ngoại tuyến của Digital Twin Tool).
-7. Nối client `carla==0.9.15` (image `bukapilot-sim:carla-0.9.15`) vào editor đang Play để chắc phiên bản khớp.
+7. Nối client `carla==0.9.15` (image `bukapilot-sim:local`) vào editor đang Play để chắc phiên bản khớp.
 8. Ghi dung lượng và thời gian thực tế vào `map-tools/README.md`.
 
 ## Todo
@@ -74,4 +74,4 @@ Token GitHub chỉ nằm trong cấu hình git của người dùng trên máy; 
 
 ## Rollback
 
-Xóa `/home/ubuntu/carla-src/` và image môi trường biên dịch. Repo chỉ thêm thư mục `map-tools/`.
+Xóa `/home/ubuntu/Project/carla-src/` và image môi trường biên dịch. Repo chỉ thêm thư mục `map-tools/`.
