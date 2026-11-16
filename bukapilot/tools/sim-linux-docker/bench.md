@@ -35,7 +35,6 @@ bash bench.sh run motorcycle 20 60                     # một ô: xe máy 20 km
 OVERTAKE=1 bash bench.sh run barrier 0 60              # một ô vượt vật cản
 OBSTACLE=motorcycle OBSTACLE_KPH=0,10,20 bash bench.sh grid   # mọi tổ hợp, không chỉ các ô có sẵn
 BENCH_EGO=50 bash bench.sh standard                    # cùng bộ ở tốc độ khác
-CARLA_VERSION=0.9.12 bash bench.sh standard            # cùng bộ trên bản CARLA cũ (mặc định 0.9.15)
 BENCH_JOBS=2 bash bench.sh standard                    # 2 stack song song (nhanh gần gấp đôi)
 bash bench.sh summary <thư mục kết quả>                # in lại bảng, ghi results.csv và results.md
 bash bench.sh stop                                     # tắt CARLA và container của benchmark
@@ -112,7 +111,8 @@ xe cũng lệch). Ngã tư là một case riêng, sẽ xử lý sau.
 - Xe máy có tốc độ đứng chờ ở điểm xuất phát và chỉ bắt đầu chạy khi xe mình engage. Trước đây nó chạy từ tick đầu,
   nên lúc xe engage nó đã đi xa thêm khoảng 30 m, và khoảng cách phụ thuộc thời gian khởi động. Kết quả ô xe máy chạy
   đo trước ngày 2026-11-16 vì vậy không so trực tiếp được với kết quả mới.
-- Chỉ số spawn của `Town04_Opt` giống hệt nhau trên CARLA 0.9.12 và 0.9.15 (đã đối chiếu cả 372 điểm).
+- Benchmark chạy trên CARLA 0.9.15 từ ngày 2026-11-16; kết quả trước đó đo trên 0.9.12. Chỉ số spawn của `Town04_Opt`
+  giống hệt nhau trên hai bản (đã đối chiếu cả 372 điểm).
 
 ## Tốc độ và tài nguyên
 
@@ -133,7 +133,6 @@ xe cũng lệch). Ngã tư là một case riêng, sẽ xử lý sau.
 
 | Biến | Mặc định | Ý nghĩa |
 |---|---|---|
-| `CARLA_VERSION` | `0.9.15` | phiên bản CARLA của server và client (image `bukapilot-sim:carla-<phiên bản>`, riêng 0.9.12 là `bukapilot-sim:local`) |
 | `REPEATS` | `1` | số lần lặp mỗi ô |
 | `RETRY_FAILED` | `1` | `1`: lần chạy trượt được chạy thêm đúng 1 lần; `0`: không chạy lại |
 | `BENCH_JOBS` | `1` | số stack chạy song song; tối đa nên là 2 |

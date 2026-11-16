@@ -4,7 +4,7 @@ Hướng dẫn demo bukapilot trong CARLA
 Chạy demo từ đầu: chuẩn bị, khởi động, chọn map và scenario, điều khiển. Chi tiết
 kỹ thuật xem [README.md](README.md).
 
-Mô hình: server CARLA 0.9.12 chạy **native trên Windows**; bukapilot, bridge và UI
+Mô hình: server CARLA 0.9.15 chạy **native trên Windows**; bukapilot, bridge và UI
 chạy trong **WSL Ubuntu**. Mọi lệnh bên dưới chạy trong WSL, ở thư mục
 `tools/sim`, trừ lệnh tường lửa (PowerShell Administrator).
 
@@ -50,11 +50,11 @@ bash run.sh setup
 ```
 
 `setup` cài gói apt, tạo venv Python 3.8 (`uv`) từ `Pipfile.lock`, build `libyuv`,
-biên dịch bukapilot bằng `scons` và tải CARLA 0.9.12 về `bukapilot/.carla/`.
+biên dịch bukapilot bằng `scons` và tải CARLA 0.9.15 về `bukapilot/.carla/`.
 Có thể chạy lại an toàn nếu bị ngắt. Dùng sẵn bản CARLA đã giải nén:
 
 ```bash
-CARLA_ROOT=/mnt/e/CARLA/0.9.12/WindowsNoEditor bash run.sh setup
+CARLA_ROOT=/mnt/e/CARLA/0.9.15/WindowsNoEditor bash run.sh setup
 ```
 
 (đặt cùng `CARLA_ROOT` cho các lệnh `run.sh` sau đó).

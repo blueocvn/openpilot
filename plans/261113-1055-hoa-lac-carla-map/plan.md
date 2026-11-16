@@ -45,7 +45,7 @@ Chạy được `bash run.sh all --carla-town HoaLac --carla-spawn-point <n>` tr
 | # | Tiêu chí | Cách kiểm |
 |---|---|---|
 | 1 | Cổng swap: sim bukapilot chạy trên 0.9.15 với kết quả đạt/không đạt của từng ô benchmark giống 0.9.12 | Phase 1, bảng so sánh |
-| 2 | Mặc định của `tools/sim-linux-docker` là 0.9.15, quay lại 0.9.12 bằng một biến môi trường | Phase 2 |
+| 2 | `tools/sim-linux-docker` và nhánh WSL `tools/sim` chạy CARLA 0.9.15; bỏ hẳn 0.9.12 (người dùng chọn ngày 2026-11-16) | Phase 2 |
 | 3 | Map `HoaLac` nạp được trên server 0.9.15 đóng gói, có điểm spawn trên mọi trục N trong phạm vi | Phase 6 |
 | 4 | Chiều dài từng trục N trong sim lệch không quá 2 % so với OSM; số làn khớp bảng kiểm kê | Phase 7 |
 | 5 | Vạch kẻ làn hiện trong ảnh camera lái (FOV 40, cao 1,13 m) trên mọi trục N | Phase 5 và 7 |
@@ -57,7 +57,7 @@ Chạy được `bash run.sh all --carla-town HoaLac --carla-spawn-point <n>` tr
 | # | Phase | Status |
 |---|-------|--------|
 | 1 | [Thử swap sim sang CARLA 0.9.15](./phase-01-trial-swap-to-carla-0915.md) | Done: cổng đạt, đã xác nhận ([báo cáo](./reports/swap-trial-0915.md)) |
-| 2 | [Chuyển mặc định sang 0.9.15](./phase-02-switch-default-to-0915.md) | Pending |
+| 2 | [Chuyển mặc định sang 0.9.15](./phase-02-switch-default-to-0915.md) | Done, chưa có baseline benchmark |
 | 3 | [Dựng CARLA 0.9.15 từ source](./phase-03-build-carla-0915-source.md) | Pending |
 | 4 | [Chuẩn bị dữ liệu OSM lưới trục N](./phase-04-prepare-osm-core-grid.md) | Pending |
 | 5 | [Sinh map bằng Digital Twin Tool](./phase-05-generate-digital-twin-map.md) | Pending |
@@ -113,6 +113,9 @@ Chạy được `bash run.sh all --carla-town HoaLac --carla-spawn-point <n>` tr
 - Công cụ dựng map: Digital Twin Tool của CARLA 0.9.15.
 - Phạm vi: lưới trục N ở lõi khu, khoảng 1,9 x 1,8 km.
 - Dữ liệu đối chiếu: chỉ nguồn công khai.
+- 2026-11-16: ở lại CARLA 0.9.15, không lên 0.9.16. `carla==0.9.16` trên PyPI chỉ có wheel cp310 đến cp312, bukapilot chạy
+  Python 3.8; build client 0.9.16 cho 3.8 hoặc nâng Python không đáng công khi Digital Twin Tool đã có trong 0.9.15.
+- 2026-11-16: bỏ hẳn 0.9.12 (cả `tools/sim-linux-docker` lẫn nhánh WSL `tools/sim`), xóa image 0.9.12.
 
 #### Impact on Phases
 - Phase 1 là cổng swap; Phase 2 chỉ chạy khi cổng đạt.

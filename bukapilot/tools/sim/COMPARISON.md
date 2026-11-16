@@ -12,9 +12,9 @@ A và B là hai cấu hình đang có. C là kết quả của việc tích hợ
 | | A. openpilot | B. bukapilot cũ | C. bukapilot mới |
 |---|---|---|---|
 | Nền | openpilot master (2025+) | openpilot 0.8.13 | openpilot 0.8.13 |
-| Chạy ở đâu | native (`.carla/run-linux.sh`) hoặc WSL2 + CARLA trên Windows (`carla/run.sh`) | Docker `bukapilot-sim:local` | Docker `bukapilot-sim:carla-0.9.15` (0.9.12: `bukapilot-sim:local`) |
+| Chạy ở đâu | native (`.carla/run-linux.sh`) hoặc WSL2 + CARLA trên Windows (`carla/run.sh`) | Docker `bukapilot-sim:local` | Docker `bukapilot-sim:local` (dùng lại, client CARLA 0.9.15) |
 | Python | 3.12 (uv, `.venv`) | 3.8 (theo `Pipfile.lock`) | 3.8 |
-| CARLA server / client | 0.9.16 / 0.9.16 | 0.9.12 (Docker, off-screen) / 0.9.12 | 0.9.15 / 0.9.15 (`CARLA_VERSION=0.9.12` vẫn chạy) |
+| CARLA server / client | 0.9.16 / 0.9.16 | 0.9.12 (Docker, off-screen) / 0.9.12 | 0.9.15 / 0.9.15 |
 | Simulator khác | MetaDrive (mặc định), CARLA | chỉ CARLA | chỉ CARLA |
 | Lệnh chạy | `bash .carla/run-linux.sh` | `./start_carla.sh` + `./start_bukapilot_docker.sh` | `./start_carla.sh` + `./start_docker.sh` |
 | Ai khởi động manager | bridge (`--launch-openpilot`) | tmux, 2 cửa sổ | bridge (`--launch-openpilot`), không cần tmux |

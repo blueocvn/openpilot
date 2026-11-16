@@ -39,7 +39,7 @@
 #   OBSTACLE=motorcycle,car   OBSTACLE_KPH=0,20   EGO=50,60
 # PARAMS=Key=1,Other=0 sets those boolean Params in every run (feature flags under test).
 # TRACE=1 writes <run>.trace/truth.jsonl for every run (TRACE_IMAGES=1 adds the camera frames).
-# Environment: CARLA_VERSION=<release> (default 0.9.15), BENCH_EGO=<kph> (set speed of the preset cells, default 60),
+# Environment: BENCH_EGO=<kph> (set speed of the preset cells, default 60),
 #   REPEATS=<n> (default 1), RETRY_FAILED=0|1 (default 1), BENCH_JOBS=<n> (stacks side by side, default 1), BENCH_OUT=<dir>,
 #   BENCH_CLEAR_M=<metres> (clear-road length, default 300), BENCH_FOLLOW_M=<metres> (follow length, default 500),
 #   BENCH_FOLLOW_START_M=<metres> (where the followed motorcycle starts, default 30; it waits until the car engages),
@@ -54,10 +54,8 @@ BENCH_PORT="${BENCH_PORT:-2100}"
 EGO_KPH="${BENCH_EGO:-60}"   # set speed of the preset cells
 JOBS="${BENCH_JOBS:-1}"
 TOWN=Town04_Opt
-CARLA_VERSION="${CARLA_VERSION:-0.9.15}"
-# the bukapilot image carries the carla client, so it is per CARLA version (0.9.12 keeps its original name)
-if [ "$CARLA_VERSION" == "0.9.12" ]; then IMAGE="${IMAGE:-bukapilot-sim:local}"; else IMAGE="${IMAGE:-bukapilot-sim:carla-$CARLA_VERSION}"; fi
-export CARLA_VERSION IMAGE
+IMAGE="${IMAGE:-bukapilot-sim:local}"   # carries the carla==0.9.15 client
+export IMAGE
 OBSTACLES="none motorcycle car barrier container"
 
 # stack_env <n>: names and ports of stack n, so that stacks side by side never share a container or a CARLA server
@@ -276,7 +274,7 @@ plan() {
 
 case "${1:-}" in
   short)
-    # the two motorcycle cells that fail most often (measured 2026-11-16, CARLA 0.9.12 and 0.9.15)
+    # the two motorcycle cells that fail most often (measured 2026-11-16)
     new_out
     run_set "${REPEATS:-1}" "motorcycle:0:$EGO_KPH" "motorcycle:7.2:$EGO_KPH"
     summarize "$OUT"

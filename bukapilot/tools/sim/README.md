@@ -14,7 +14,7 @@ thay thế nó. Bảng so sánh xem ở [COMPARISON.md](COMPARISON.md).
 
 ## Chạy
 
-Không dùng Docker. Cấu trúc theo `openpilot/tools/sim/carla`: server CARLA 0.9.12
+Không dùng Docker. Cấu trúc theo `openpilot/tools/sim/carla`: server CARLA 0.9.15
 chạy **native trên Windows**, bukapilot + bridge chạy trong **WSL Ubuntu** (venv
 Python 3.8 do `uv` tạo). Một điểm vào duy nhất: `run.sh` (gọi `run.ps1` để điều
 khiển phía Windows).
@@ -55,7 +55,7 @@ dùng `--no-auto-engage`. Danh sách scenario và map xem [demo.md](demo.md).
 |---|---|
 | `CARLA_HEADLESS=1` | không mở cửa sổ CARLA (`-RenderOffScreen`) |
 | `CARLA_QUALITY=Low\|High` | chất lượng render (mặc định `Low`) |
-| `CARLA_ROOT=/mnt/e/CARLA/0.9.12/WindowsNoEditor` | dùng bản CARLA đã giải nén sẵn thay vì tải |
+| `CARLA_ROOT=/mnt/e/CARLA/0.9.15/WindowsNoEditor` | dùng bản CARLA đã giải nén sẵn thay vì tải |
 | `CARLA_HOST`, `CARLA_PORT` | địa chỉ server (mặc định gateway của WSL, cổng 2000) |
 | `SKIP_BUILD=1` | bỏ qua `scons` |
 | `CARLA_CAMERA_X`, `CARLA_CAMERA_Z` | vị trí camera (mặc định 0.8 / 1.13 m như bridge cũ) |
@@ -102,5 +102,5 @@ Test kiểm tra:
 * Thân xe trong CARLA là Tesla Model 3, nhưng bukapilot thấy một chiếc Honda
   Civic 2016 qua CAN (giống bridge cũ).
 * Hệ số ga/phanh (`bridge/carla_bridge.py`) lấy theo upstream (CARLA 0.9.16).
-  Vòng PI quanh `carState.aEgo` bù phần chênh, nhưng chưa tinh chỉnh lại cho 0.9.12.
+  Vòng PI quanh `carState.aEgo` bù phần chênh, nhưng chưa tinh chỉnh lại cho 0.9.15.
 * Phần joystick port nguyên từ bản cũ, chưa thử với phần cứng thật.

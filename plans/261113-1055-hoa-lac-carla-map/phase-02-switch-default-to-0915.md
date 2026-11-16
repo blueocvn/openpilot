@@ -1,6 +1,6 @@
 ---
 title: "Phase 2: Chuyển mặc định sang 0.9.15"
-status: todo
+status: done
 priority: P1
 effort: "1d"
 dependencies: [1]
@@ -14,10 +14,10 @@ Chỉ làm khi cổng Phase 1 đạt. Đổi mặc định của `tools/sim-linu
 
 ## Requirements
 
-- [ ] `bash run.sh all` không đặt biến nào chạy trên 0.9.15.
-- [ ] `CARLA_VERSION=0.9.12` vẫn chạy được như trước.
-- [ ] Baseline benchmark trên 0.9.15 được ghi lại để plan vật cản dùng tiếp.
-- [ ] Tài liệu không còn nói mặc định là 0.9.12.
+- [x] `bash run.sh all` không đặt biến nào chạy trên 0.9.15 (người dùng chạy thử thủ công).
+- [x] ~~`CARLA_VERSION=0.9.12` vẫn chạy được như trước.~~ Bỏ: người dùng chọn bỏ hẳn 0.9.12 sau khi chạy thử 0.9.15 (2026-11-16).
+- [ ] Baseline benchmark trên 0.9.15 được ghi lại để plan vật cản dùng tiếp. Chưa làm: người dùng dừng test; chạy `bash bench.sh standard` khi cần.
+- [x] Tài liệu không còn nói mặc định là 0.9.12.
 
 ## Files to Create / Modify
 
@@ -38,13 +38,13 @@ Chỉ làm khi cổng Phase 1 đạt. Đổi mặc định của `tools/sim-linu
 
 ## Todo
 
-- [ ] Đổi mặc định ở Dockerfile và script
-- [ ] Dựng lại asset logo cho 0.9.15
-- [ ] Áp dụng chỉnh sửa từ báo cáo Phase 1
+- [x] Đổi mặc định ở Dockerfile và script
+- [x] Dựng lại asset logo cho 0.9.15
+- [x] Áp dụng chỉnh sửa từ báo cáo Phase 1
 - [ ] `bench.sh standard` làm baseline mới
-- [ ] Cập nhật tài liệu sim
-- [ ] Cập nhật plan vật cản
-- [ ] Chốt với người dùng về nhánh Windows/WSL
+- [x] Cập nhật tài liệu sim
+- [x] Cập nhật plan vật cản
+- [x] Chốt với người dùng về nhánh Windows/WSL
 
 ## Success Criteria
 
@@ -57,6 +57,14 @@ Chỉ làm khi cổng Phase 1 đạt. Đổi mặc định của `tools/sim-linu
 
 - Baseline đổi làm kết luận của plan vật cản lệch. Phản ứng: giữ cả hai bộ số, ghi rõ phiên bản ở từng bảng.
 - Người dùng đang chạy sim khi đổi mặc định. Phản ứng: đổi file xong mới báo, không tự dừng container đang chạy.
+
+## Result
+
+2026-11-16. Chỉ còn CARLA 0.9.15: biến `CARLA_VERSION` đã bỏ; image `bukapilot-sim:local` (client 0.9.15) và
+`carla-sim:0.9.15`; asset logo người lái dựng lại cho 0.9.15 trong `carla-assets/Content` (có thêm ô che chữ "CARLA"
+trên lưng áo bomber). Nhánh WSL (`tools/sim/run.sh`, `run.ps1`) chuyển sang 0.9.15 theo yêu cầu người dùng; chưa kiểm
+chứng được trên Windows từ máy này. Không có chỉnh sửa gamma hay chỉ số spawn (Phase 1: không cần). Baseline
+`bench.sh standard` chưa chạy xong (người dùng dừng test).
 
 ## Rollback
 

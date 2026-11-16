@@ -1,8 +1,8 @@
 """CARLA world for the bukapilot bridge, ported from
 openpilot/tools/sim/bridge/carla/carla_world.py.
 
-Kept compatible with the CARLA 0.9.12 and 0.9.15 Python APIs (tools/sim-linux-docker defaults to 0.9.15; the
-Windows/WSL path in tools/sim still pins 0.9.12, which has no Client.load_world_if_different), and with
+Written for the CARLA 0.9.15 Python API (pinned in tools/sim-linux-docker/Dockerfile.bukapilot and tools/sim/run.sh;
+the newest client with a Python 3.8 wheel) and still loads worlds the 0.9.12 way (no Client.load_world_if_different), and with
 the legacy bridge's camera mount, which matches the 0.8.13 EON-era model.
 """
 import collections

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bukapilot + CARLA on Windows/WSL2, no Docker. Structure follows
 # openpilot/tools/sim/carla/run.sh:
-#   * CARLA 0.9.12 runs natively on Windows (started through run.ps1 via powershell.exe)
+#   * CARLA 0.9.15 runs natively on Windows (started through run.ps1 via powershell.exe)
 #   * bukapilot, the bridge and its UI run in the Ubuntu WSL distro, in a Python 3.8 venv
 #
 #   bash run.sh setup                                   # one time: packages, venv, libyuv, scons, CARLA
@@ -10,7 +10,7 @@
 #   bash run.sh server | bridge [args] | status | stop
 #
 # Environment: CARLA_HEADLESS=1, CARLA_QUALITY=Low|High, CARLA_PORT=2000, CARLA_HOST=<ip>,
-#              CARLA_ROOT=/mnt/e/CARLA/0.9.12/WindowsNoEditor (reuse an existing install),
+#              CARLA_ROOT=/mnt/e/CARLA/0.9.15/WindowsNoEditor (reuse an existing install),
 #              WSL_DISTRO=Ubuntu-22.04, OP_UI=1 (default, openpilot UI) | 0 (bukapilot Qt UI), SKIP_BUILD=1
 set -euo pipefail
 
@@ -100,7 +100,7 @@ with open(sys.argv[2], 'w') as f:
       continue
     f.write(f"{k}{v['version']}" + (f"; {v['markers']}" if 'markers' in v else '') + "\n")
 PY
-  VIRTUAL_ENV="$VENV" uv pip install -r "$WSL_CACHE_ROOT/requirements.txt" onnxruntime==1.10.0 carla==0.9.12
+  VIRTUAL_ENV="$VENV" uv pip install -r "$WSL_CACHE_ROOT/requirements.txt" onnxruntime==1.10.0 carla==0.9.15
 }
 
 build_bukapilot() {

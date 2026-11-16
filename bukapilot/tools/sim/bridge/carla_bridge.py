@@ -5,7 +5,7 @@ from tools.sim.bridge.carla_world import CarlaWorld
 class CarlaBridge(SimulatorBridge):
   TICKS_PER_FRAME = 5
   # Starting point from openpilot/tools/sim/bridge/carla/carla_bridge.py (Model 3);
-  # the PI loop around carState.aEgo absorbs the CARLA 0.9.12 physics mismatch.
+  # the PI loop around carState.aEgo absorbs the CARLA 0.9.15 physics mismatch.
   THROTTLE_ACCEL = 6.0
   BRAKE_DECEL = 50.0
   longitudinal_accel_kp = 0.8

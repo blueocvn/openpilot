@@ -14,7 +14,7 @@ code bridge dùng lại từ `../sim`.
 
 ```bash
 cd bukapilot/tools/sim-linux-docker
-bash run.sh setup        # một lần: build image bukapilot-sim:carla-0.9.15 và carla-sim:0.9.15
+bash run.sh setup        # một lần: build image bukapilot-sim:local và carla-sim:0.9.15 (CARLA 0.9.15)
 bash run.sh setup-ui     # một lần, tùy chọn: UI openpilot (cần mạng, vài phút)
 bash run.sh all --carla-town Town04_Opt --carla-spawn-point 16
 ```
@@ -36,7 +36,6 @@ Lần chạy `all` đầu tiên còn build libyuv, tải thư viện acados và 
 
 | Biến                            | Ý nghĩa                                                                                                                                                                   |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CARLA_VERSION=0.9.12`          | chạy bản CARLA cũ (mặc định `0.9.15`; image `bukapilot-sim:local`, `carla-sim:0.9.12`, asset `carla-assets/0.9.12/`)                                                     |
 | `CARLA_HEADLESS=1`              | CARLA không mở cửa sổ                                                                                                                                                     |
 | `CARLA_QUALITY=Low|High`        | chất lượng render (mặc định `High`)                                                                                                                                        |
 | `OP_UI=1|0`                     | 1 = UI openpilot trên host, 0 = UI Qt của bukapilot. Mặc định 1 nếu có `[[ORCA_RICH_MD:0f7ddb9c681681e71b87a3522b90f157:inline-html:%3Copenpilot%3E]]/.venv`, không thì 0 |

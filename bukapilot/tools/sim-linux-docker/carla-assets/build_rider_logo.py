@@ -10,12 +10,12 @@ Patched cooked UE4.26 textures (all DXT1, 2048x2048, 12 mips):
 For every logo box the area is cleared to the surrounding cloth colour and the icon is composited on it (icon above, wordmark below).
 Only the DXT blocks that overlap a logo are re-encoded, every other block is kept byte for byte. The
 .uasset files are untouched (mip sizes do not change), so only .uexp/.ubulk are written. Output goes to
-<version>/Content/..., which start_carla.sh bind-mounts over the same path inside the CARLA container of that release
-(cooked assets differ between releases: the bomber jacket of 0.9.12 and 0.9.15 is not byte-identical).
+Content/..., which start_carla.sh bind-mounts over the same path inside the CARLA container. Cooked assets belong to
+one CARLA release (the bomber jacket of 0.9.12 and 0.9.15 is not byte-identical): rebuild when IMAGE changes.
 
-  python3 build_rider_logo.py [--version 0.9.15] [--icon BlueOC-icon.png] [--src DIR] [--preview-dir DIR]
+  python3 build_rider_logo.py [--icon BlueOC-icon.png] [--src DIR] [--preview-dir DIR]
 
-Without --src the originals are copied out of the carlasim/carla:<version> image; with --src they are read from
+Without --src the originals are copied out of the IMAGE image; with --src they are read from
 DIR/<texture name>.uexp (+ .ubulk when the texture has one).
 """
 import argparse
@@ -31,7 +31,7 @@ import numpy as np
 from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_VERSION = "0.9.15"
+IMAGE = "carlasim/carla:0.9.15"
 PED = "Content/Carla/Static/Pedestrian"
 
 # boxes: logo areas (x0, y0, x1, y1; exclusive) in full-resolution texels. The new logo (icon on top,
@@ -226,21 +226,19 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--icon", default=os.path.join(HERE, "BlueOC-icon.png"))
     ap.add_argument("--src", help="directory holding the original <texture>.uexp/.ubulk files")
-    ap.add_argument("--version", default=DEFAULT_VERSION, help="CARLA release (default %(default)s)")
-    ap.add_argument("--out", help="output root (default: <this directory>/<version>)")
+    ap.add_argument("--out", default=HERE, help="output root (default: this directory)")
     ap.add_argument("--icon-value", type=float, default=ICON_VALUE, help="icon brightness multiplier (default %(default)s)")
     ap.add_argument("--icon-saturation", type=float, default=ICON_SATURATION,
                     help="icon saturation multiplier (default %(default)s)")
     ap.add_argument("--preview-dir", help="also write PNG previews of the patched textures here")
     args = ap.parse_args()
 
-    out = args.out or os.path.join(HERE, args.version)
     tmp = tempfile.TemporaryDirectory()
     src = args.src or tmp.name
     for tex in TEXTURES:
         if args.src is None:
-            fetch_originals(tex, src, f"carlasim/carla:{args.version}")
-        patch_texture(tex, src, out, args.icon, args.preview_dir, args.icon_value, args.icon_saturation)
+            fetch_originals(tex, src, IMAGE)
+        patch_texture(tex, src, args.out, args.icon, args.preview_dir, args.icon_value, args.icon_saturation)
 
 
 if __name__ == "__main__":

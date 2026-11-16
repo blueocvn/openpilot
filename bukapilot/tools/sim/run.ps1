@@ -7,19 +7,19 @@ param(
   [string]$Quality = 'Low',
   [string]$WslDistro = 'Ubuntu-22.04',
   [string]$WslRemoteAddress = '',
-  # Folder that contains CarlaUE4.exe (or its parent, e.g. ...\0.9.12 with a WindowsNoEditor subfolder).
-  # Default: <bukapilot>\.carla\CARLA_0.9.12, downloaded by `setup`.
+  # Folder that contains CarlaUE4.exe (or its parent, e.g. ...\0.9.15 with a WindowsNoEditor subfolder).
+  # Default: <bukapilot>\.carla\CARLA_0.9.15, downloaded by `setup`.
   [string]$CarlaRoot = ''
 )
 
 # CARLA server launcher for Windows. Called from WSL by run.sh (powershell.exe run.ps1 ...).
-# Mirrors openpilot/tools/sim/carla/run.ps1, pinned to CARLA 0.9.12 (matches the carla==0.9.12 client).
+# Mirrors openpilot/tools/sim/carla/run.ps1, pinned to CARLA 0.9.15 (matches the carla==0.9.15 client).
 
 $ErrorActionPreference = 'Stop'
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path   # bukapilot root
 $StateRoot = Join-Path $RepoRoot '.carla'
 $DownloadRoot = Join-Path $StateRoot 'downloads'
-$CarlaVersion = '0.9.12'
+$CarlaVersion = '0.9.15'
 $InstallRoot = if ($CarlaRoot) { $CarlaRoot } else { Join-Path $StateRoot "CARLA_$CarlaVersion" }
 $Archive = Join-Path $DownloadRoot "CARLA_$CarlaVersion.zip"
 $DownloadUrl = "https://carla-releases.s3.us-east-005.backblazeb2.com/Windows/CARLA_$CarlaVersion.zip"
@@ -44,7 +44,7 @@ function Initialize-StateEnvironment {
     ${env:UE-LocalDataCachePath}, $env:APPDATA, $env:LOCALAPPDATA | Out-Null
 }
 
-# The 0.9.12 zip unpacks into a WindowsNoEditor subfolder; accept either layout.
+# The CARLA zip may unpack into a WindowsNoEditor subfolder; accept either layout.
 function Resolve-CarlaDir {
   foreach ($candidate in @($InstallRoot, (Join-Path $InstallRoot 'WindowsNoEditor'))) {
     if (Test-Path (Join-Path $candidate 'CarlaUE4.exe')) { return $candidate }
