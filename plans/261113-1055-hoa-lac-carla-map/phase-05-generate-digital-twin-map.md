@@ -10,9 +10,12 @@ dependencies: [3, 4]
 
 ## Overview
 
-Dùng Digital Twin Tool trong Unreal Editor của CARLA 0.9.15 để sinh map `HoaLac` từ `hoalac-core.osm`, kiểm vạch kẻ làn trong góc nhìn camera lái, rồi lưu map.
+Dùng Digital Twin Tool trong Unreal Editor của CARLA 0.9.15 để sinh map `HoaLac` từ `bukapilot/tools/sim/maps/hoalac/hoalac-route.osm`, kiểm vạch kẻ làn trong góc nhìn camera lái, rồi lưu map.
 
 ## Key Insights
+
+- Đầu vào đã chốt ngày 2026-11-17: `hoalac-route.osm` (33,8 km đường thật theo khung vẽ tay và route mask, kèm nhà, landuse, vỉa hè ven đường; tạo bằng `extract-route.py` trong cùng thư mục). 16 checkpoint của tuyến ở `hoalac-checkpoints.json` (lat/lon, đường, id way OSM); dùng để chọn điểm chụp ảnh ở bước 5 và điểm spawn ở Phase 6.
+- File có vài nhánh cụt ngắn (dưới 100 m) gần nút giao cao tốc cạnh checkpoint 16 và góc N05/Mục Uyên; nếu công cụ sinh đường cụt gây lỗi mặt đường thì xóa các nhánh đó trong JOSM rồi sinh lại.
 
 - Theo tài liệu CARLA 0.9.15: công cụ sinh mặt đường có vạch kẻ và vân bề mặt, nhà theo footprint và chiều cao trong OSM, cây trên vỉa hè. Sinh khoảng 10 phút cho vùng 2 x 2 km; lưu map mất từ một đến vài giờ.
 - CARLA ghi rõ đây là tính năng thử nghiệm, có thể còn vùng chưa trang trí hoặc chưa có vân.
@@ -34,7 +37,7 @@ Dùng Digital Twin Tool trong Unreal Editor của CARLA 0.9.15 để sinh map `H
 
 ## Implementation Steps
 
-1. Chép `hoalac-core.osm` vào thư mục map của trình xem OSM trong cây mã nguồn CARLA và chạy script tiền xử lý của nó theo tài liệu Digital Twin (`./build.sh <đường_dẫn_file.osm>` trong `Build/libosmcout-source/maps/`). Nếu script báo không tìm thấy `Import`, nhánh `elif` ở Phase 3 bước 6 chưa được thêm.
+1. Chép `hoalac-route.osm` vào thư mục map của trình xem OSM trong cây mã nguồn CARLA và chạy script tiền xử lý của nó theo tài liệu Digital Twin (`./build.sh <đường_dẫn_file.osm>` trong `Build/libosmcout-source/maps/`). Nếu script báo không tìm thấy `Import`, nhánh `elif` ở Phase 3 bước 6 chưa được thêm.
 2. Mở editor, chạy widget `UW_OnRoadMainWidget` (trong `CarlaToolsContent/OnroadMapGenerator`), chọn cơ sở dữ liệu OSM vừa xử lý, chọn vùng lưới trục N, đặt tên `HoaLac`, bấm generate. Ghi thời gian.
 3. Xem map trong editor: từng trục N có vạch tim và vạch chia làn không, nút giao có liền mặt không, vùng nào chưa trang trí.
 4. Bấm Play, nối client 0.9.15: đếm điểm spawn, lấy OpenDRIVE qua `get_map().to_opendrive()`, so số làn và bề rộng làn với bảng kiểm kê của Phase 4.

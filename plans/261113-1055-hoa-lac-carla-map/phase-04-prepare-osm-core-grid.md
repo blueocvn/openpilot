@@ -10,6 +10,9 @@ dependencies: []
 
 ## Overview
 
+> Cập nhật 2026-11-17: người dùng chốt file OSM là `bukapilot/tools/sim/maps/hoalac/hoalac-route.osm`, tách từ bản tải JOSM theo khung vẽ tay và route mask bằng `extract-route.py` (thay cho `fetch-osm.sh` và `hoalac-core.osm`). Bảng kiểm kê làn và việc bổ sung thẻ `lanes`/`width` chưa làm.
+
+
 Tạo một file `.osm` đã chốt và đã sửa cho lưới trục N ở lõi Khu CNC Hòa Lạc, kèm bảng kiểm kê từng đường. Đây là đầu vào duy nhất của Digital Twin Tool. Phase này không phụ thuộc phase nào và làm song song được trong lúc chờ Phase 3 biên dịch.
 
 ## Key Insights

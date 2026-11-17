@@ -59,7 +59,7 @@ Chạy được `bash run.sh all --carla-town HoaLac --carla-spawn-point <n>` tr
 | 1 | [Thử swap sim sang CARLA 0.9.15](./phase-01-trial-swap-to-carla-0915.md) | Done: cổng đạt, đã xác nhận ([báo cáo](./reports/swap-trial-0915.md)) |
 | 2 | [Chuyển mặc định sang 0.9.15](./phase-02-switch-default-to-0915.md) | Done, chưa có baseline benchmark |
 | 3 | [Dựng CARLA 0.9.15 từ source](./phase-03-build-carla-0915-source.md) | Pending |
-| 4 | [Chuẩn bị dữ liệu OSM lưới trục N](./phase-04-prepare-osm-core-grid.md) | Pending |
+| 4 | [Chuẩn bị dữ liệu OSM lưới trục N](./phase-04-prepare-osm-core-grid.md) | OSM chốt 2026-11-17 (`hoalac-route.osm`); bảng kiểm kê làn chưa làm |
 | 5 | [Sinh map bằng Digital Twin Tool](./phase-05-generate-digital-twin-map.md) | Pending |
 | 6 | [Đóng gói và đưa map vào sim](./phase-06-package-and-deploy-map.md) | Pending |
 | 7 | [Kiểm chứng map so với hiện trường](./phase-07-validate-map-against-real-site.md) | Pending |
