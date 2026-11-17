@@ -18,6 +18,7 @@ Dùng Digital Twin Tool trong Unreal Editor của CARLA 0.9.15 để sinh map `H
 - CARLA ghi rõ đây là tính năng thử nghiệm, có thể còn vùng chưa trang trí hoặc chưa có vân.
 - Trình xem OSM ngoại tuyến chỉ có trên Linux và cần `make osmrenderer` (đã làm ở Phase 3).
 - Tài liệu không nói về địa hình: map sẽ phẳng.
+- Nhà do công cụ dựng theo footprint và chiều cao trong OSM; nếu OSM thiếu footprint ở Hòa Lạc, công cụ lấp vào các khoảng trống bằng nhà giả lập. Chỉ mạng đường là dữ liệu bám thực tế, nên không gọi phần nhà là digital twin. Ghi điều này vào báo cáo sinh map.
 - Camera lái của sim: FOV 40, 1928 x 1208, đặt cao 1,13 m, cách gốc tọa độ của xe 0,8 m về phía trước (`bukapilot/tools/sim/bridge/carla_world.py`).
 
 ## Requirements
@@ -33,7 +34,7 @@ Dùng Digital Twin Tool trong Unreal Editor của CARLA 0.9.15 để sinh map `H
 
 ## Implementation Steps
 
-1. Chép `hoalac-core.osm` vào thư mục map của trình xem OSM trong cây mã nguồn CARLA và chạy script tiền xử lý của nó theo tài liệu Digital Twin.
+1. Chép `hoalac-core.osm` vào thư mục map của trình xem OSM trong cây mã nguồn CARLA và chạy script tiền xử lý của nó theo tài liệu Digital Twin (`./build.sh <đường_dẫn_file.osm>` trong `Build/libosmcout-source/maps/`). Nếu script báo không tìm thấy `Import`, nhánh `elif` ở Phase 3 bước 6 chưa được thêm.
 2. Mở editor, chạy widget `UW_OnRoadMainWidget` (trong `CarlaToolsContent/OnroadMapGenerator`), chọn cơ sở dữ liệu OSM vừa xử lý, chọn vùng lưới trục N, đặt tên `HoaLac`, bấm generate. Ghi thời gian.
 3. Xem map trong editor: từng trục N có vạch tim và vạch chia làn không, nút giao có liền mặt không, vùng nào chưa trang trí.
 4. Bấm Play, nối client 0.9.15: đếm điểm spawn, lấy OpenDRIVE qua `get_map().to_opendrive()`, so số làn và bề rộng làn với bảng kiểm kê của Phase 4.

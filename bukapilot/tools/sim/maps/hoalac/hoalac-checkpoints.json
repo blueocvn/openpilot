@@ -1,0 +1,249 @@
+{
+  "source_mask": "hoalac-route-mask.png",
+  "origin_latlon": [
+    20.9742775,
+    105.5033288
+  ],
+  "checkpoints": [
+    {
+      "id": 1,
+      "lat": 21.0224077,
+      "lon": 105.5430418,
+      "x_m": 4127.9,
+      "y_m": 5322.0,
+      "mask_px": [
+        467.5,
+        56.8
+      ],
+      "road": "tertiary way 379684648",
+      "osm_way": "379684648",
+      "snap_distance_m": 7.6,
+      "on_extracted_route": true
+    },
+    {
+      "id": 2,
+      "lat": 21.0165491,
+      "lon": 105.5323335,
+      "x_m": 3014.9,
+      "y_m": 4674.1,
+      "mask_px": [
+        269.3,
+        168.2
+      ],
+      "road": "tertiary way 379684648",
+      "osm_way": "379684648",
+      "snap_distance_m": 0.9,
+      "on_extracted_route": true
+    },
+    {
+      "id": 3,
+      "lat": 21.014054,
+      "lon": 105.541272,
+      "x_m": 3944.0,
+      "y_m": 4398.2,
+      "mask_px": [
+        433.1,
+        218.4
+      ],
+      "road": "tertiary way 737887581",
+      "osm_way": "737887581",
+      "snap_distance_m": 0.7,
+      "on_extracted_route": true
+    },
+    {
+      "id": 4,
+      "lat": 21.0115548,
+      "lon": 105.5260408,
+      "x_m": 2360.8,
+      "y_m": 4121.9,
+      "mask_px": [
+        148.2,
+        259.0
+      ],
+      "road": "Đường N16",
+      "osm_way": "1242533956",
+      "snap_distance_m": 42.6,
+      "on_extracted_route": true
+    },
+    {
+      "id": 5,
+      "lat": 21.01179,
+      "lon": 105.5475317,
+      "x_m": 4594.6,
+      "y_m": 4147.9,
+      "mask_px": [
+        547.7,
+        263.1
+      ],
+      "road": "Đường N12",
+      "osm_way": "896445026",
+      "snap_distance_m": 3.6,
+      "on_extracted_route": true
+    },
+    {
+      "id": 6,
+      "lat": 21.0106279,
+      "lon": 105.544823,
+      "x_m": 4313.1,
+      "y_m": 4019.4,
+      "mask_px": [
+        496.5,
+        284.2
+      ],
+      "road": "Đường N12",
+      "osm_way": "896445026",
+      "snap_distance_m": 12.4,
+      "on_extracted_route": true
+    },
+    {
+      "id": 7,
+      "lat": 21.0105407,
+      "lon": 105.5338556,
+      "x_m": 3173.1,
+      "y_m": 4009.8,
+      "mask_px": [
+        296.7,
+        288.8
+      ],
+      "road": "Đường N14",
+      "osm_way": "379700759",
+      "snap_distance_m": 16.2,
+      "on_extracted_route": true
+    },
+    {
+      "id": 8,
+      "lat": 21.0086414,
+      "lon": 105.5304419,
+      "x_m": 2818.3,
+      "y_m": 3799.8,
+      "mask_px": [
+        230.6,
+        323.0
+      ],
+      "road": "Đường N11",
+      "osm_way": "501175774",
+      "snap_distance_m": 15.8,
+      "on_extracted_route": true
+    },
+    {
+      "id": 9,
+      "lat": 21.007557,
+      "lon": 105.539008,
+      "x_m": 3708.6,
+      "y_m": 3679.8,
+      "mask_px": [
+        389.7,
+        345.4
+      ],
+      "road": "tertiary way 1241683304",
+      "osm_way": "1241683304",
+      "snap_distance_m": 4.9,
+      "on_extracted_route": true
+    },
+    {
+      "id": 10,
+      "lat": 21.0045811,
+      "lon": 105.5345468,
+      "x_m": 3244.9,
+      "y_m": 3350.8,
+      "mask_px": [
+        307.4,
+        399.5
+      ],
+      "road": "Đường N12",
+      "osm_way": "1569056692",
+      "snap_distance_m": 17.6,
+      "on_extracted_route": true
+    },
+    {
+      "id": 11,
+      "lat": 21.0032417,
+      "lon": 105.5470336,
+      "x_m": 4542.8,
+      "y_m": 3202.7,
+      "mask_px": [
+        534.0,
+        432.0
+      ],
+      "road": "unclassified way 1304781168",
+      "osm_way": "1304781168",
+      "snap_distance_m": 19.4,
+      "on_extracted_route": true
+    },
+    {
+      "id": 12,
+      "lat": 21.0024985,
+      "lon": 105.5376449,
+      "x_m": 3567.0,
+      "y_m": 3120.5,
+      "mask_px": [
+        364.1,
+        443.9
+      ],
+      "road": "Đường N07",
+      "osm_way": "1304781165",
+      "snap_distance_m": 2.9,
+      "on_extracted_route": true
+    },
+    {
+      "id": 13,
+      "lat": 20.998977,
+      "lon": 105.5338585,
+      "x_m": 3173.4,
+      "y_m": 2731.1,
+      "mask_px": [
+        288.9,
+        514.2
+      ],
+      "road": "Đường N11",
+      "osm_way": "498552498",
+      "snap_distance_m": 33.6,
+      "on_extracted_route": true
+    },
+    {
+      "id": 14,
+      "lat": 20.9953967,
+      "lon": 105.5497641,
+      "x_m": 4826.7,
+      "y_m": 2335.2,
+      "mask_px": [
+        581.4,
+        584.4
+      ],
+      "road": "Đường nội bộ Khu Công Nghệ Cao",
+      "osm_way": "1304781166",
+      "snap_distance_m": 26.2,
+      "on_extracted_route": true
+    },
+    {
+      "id": 15,
+      "lat": 20.9929899,
+      "lon": 105.5358195,
+      "x_m": 3377.2,
+      "y_m": 2069.1,
+      "mask_px": [
+        331.5,
+        628.4
+      ],
+      "road": "tertiary_link way 290804491",
+      "osm_way": "290804491",
+      "snap_distance_m": 12.6,
+      "on_extracted_route": true
+    },
+    {
+      "id": 16,
+      "lat": 20.986902,
+      "lon": 105.5363333,
+      "x_m": 3430.6,
+      "y_m": 1395.9,
+      "mask_px": [
+        343.0,
+        748.8
+      ],
+      "road": "primary_link way 684695008",
+      "osm_way": "684695008",
+      "snap_distance_m": 29.4,
+      "on_extracted_route": true
+    }
+  ]
+}

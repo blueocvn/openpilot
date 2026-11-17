@@ -39,7 +39,7 @@ Digital Twin Tool chạy trong Unreal Editor, nên cần một bản CARLA 0.9.1
 3. Người dùng xác nhận đã có quyền vào kho Unreal. Clone nhánh `carla` vào `/home/ubuntu/Project/carla-src/UnrealEngine_4.26`; chạy `Setup.sh`, `GenerateProjectFiles.sh`, `make` trong container.
 4. Clone CARLA tag `0.9.15` vào `/home/ubuntu/Project/carla-src/carla`; chạy `Update.sh` để tải asset; đặt `UE4_ROOT`.
 5. Chạy `make launch` trong container với X11 của máy chủ; chờ biên dịch shader; mở map mặc định và bấm Play.
-6. Chạy `make osmrenderer` (trình xem OSM ngoại tuyến của Digital Twin Tool).
+6. Chạy `make osmrenderer` (trình xem OSM ngoại tuyến của Digital Twin Tool; cần CMake 3.2 trở lên; tạo `Build/libosmcout-source` và `Build/libosmcout-build`). Sau đó mở `Build/libosmcout-source/maps/build.sh` và thêm một nhánh `elif` để script tìm được file `Import`, theo tài liệu Digital Twin; rồi build lại CARLA.
 7. Nối client `carla==0.9.15` (image `bukapilot-sim:local`) vào editor đang Play để chắc phiên bản khớp.
 8. Ghi dung lượng và thời gian thực tế vào `map-tools/README.md`.
 
